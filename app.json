@@ -1,0 +1,15 @@
+{
+  "name": "Telegram Auto Request Bot",
+  "description": "Auto-approve join requests for Telegram groups and channels with multiple approval modes.",
+  "repository": "https://github.com/MD-TECH-HACKER/Telegram-Auto-Request-Bot",
+  "keywords": ["telegram", "bot", "auto-approve", "join-request", "python"],
+  "env": {
+    "BOT_TOKEN": { "description": "Bot token from @BotFather", "required": true },
+    "OWNER_ID": { "description": "Your Telegram user ID", "required": true },
+    "API_ID": { "description": "Telegram API ID from my.telegram.org", "required": true },
+    "API_HASH": { "description": "Telegram API Hash from my.telegram.org", "required": true },
+    "REQUIRED_CHANNEL": { "description": "Channel with @ for force join", "required": false }
+  },
+  "formation": { "worker": { "quantity": 1, "size": "eco" } },
+  "buildpacks": [{ "url": "heroku/python" }]
+}

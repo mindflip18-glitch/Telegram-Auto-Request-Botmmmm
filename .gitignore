@@ -1,0 +1,10 @@
+.env
+data/*.json
+sessions/
+__pycache__/
+*.py[cod]
+*.session
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
