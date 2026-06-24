@@ -1,6 +1,7 @@
 import os
 import logging
 import asyncio
+from aiohttp import web  # 👈 Ye naya import add kiya hai
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.client.bot import DefaultBotProperties
@@ -57,29 +58,39 @@ async def cmd_start(msg: types.Message):
     me = await bot.get_me()
     kb = await get_welcome_kb(me.username)
     
-    await msg.answer(
-        WELCOME_TEXT,
-        reply_markup=kb
-    )
+    await msg.answer(WELCOME_TEXT, reply_markup=kb)
 
 @dp.chat_join_request()
 async def auto_approve_join_request(update: types.ChatJoinRequest):
-    """
-    Safely and automatically approve join requests 
-    using Telegram's official API. No user login required!
-    """
+    """Safely auto-approve join requests"""
     try:
         await update.approve()
         logging.info(f"Approved user {update.from_user.id} in chat {update.chat.id}")
-        
-        # Optional: Send a welcome message to the user privately after approving
-        # await bot.send_message(update.from_user.id, f"Welcome to {update.chat.title}!")
-        
     except Exception as e:
         logging.error(f"Failed to approve user: {e}")
 
+# 👇 DUMMY WEB SERVER (Render ko khush rakhne ke liye)
+async def handle_ping(request):
+    return web.Response(text="Bot is running beautifully! 🚀")
+
+async def start_dummy_server():
+    app = web.Application()
+    app.router.add_get('/', handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    
+    # Render khud PORT environment variable set karta hai
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    logging.info(f"Dummy web server started on port {port}")
+
 async def main():
-    print("🤖 Safe Auto-Approve Bot is running...")
+    # 1. Pehle dummy server start karo
+    await start_dummy_server()
+    
+    # 2. Phir bot start karo
+    logging.info("🤖 Safe Auto-Approve Bot is running...")
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
@@ -87,4 +98,3 @@ if __name__ == '__main__':
         asyncio.run(main())
     except KeyboardInterrupt:
         print("Bot stopped.")
-        
