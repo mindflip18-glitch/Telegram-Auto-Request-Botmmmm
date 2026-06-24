@@ -60,28 +60,16 @@ async def cmd_start(msg: types.Message):
     
     await msg.answer(WELCOME_TEXT, reply_markup=kb)
 
-# 👇 UPDATED: Pehle DM bheje ga, phir Request Approve karega
+# 👇 UPDATED: Ab ye sirf Request Approve karega, Welcome msg nahi bhejega
 @dp.chat_join_request()
 async def auto_approve_join_request(update: types.ChatJoinRequest):
-    """Safely auto-approve join requests and send DM"""
+    """Safely auto-approve join requests silently"""
     user_id = update.from_user.id
-    chat_title = update.chat.title
     
-    # 1. PEHLE DM BHEJO
-    welcome_msg = (
-        f"👋 <b>Welcome {update.from_user.first_name}!</b>\n\n"
-        f"Aapki request approve ho gayi hai. Aapka <b>{chat_title}</b> mein swagat hai! 🎉"
-    )
-    try:
-        await bot.send_message(chat_id=user_id, text=welcome_msg)
-        logging.info(f"Welcome DM successfully sent to {user_id}")
-    except Exception as e:
-        logging.error(f"Welcome DM bhejne mein dikkat (User strict privacy settings): {e}")
-
-    # 2. USKE BAAD REQUEST APPROVE KARO
+    # SEEDHA REQUEST APPROVE KARO BINA MSG BHEJE
     try:
         await update.approve()
-        logging.info(f"Approved user {user_id} in chat {update.chat.id}")
+        logging.info(f"Silently approved user {user_id} in chat {update.chat.id}")
     except Exception as e:
         logging.error(f"Failed to approve user: {e}")
 
