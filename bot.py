@@ -75,7 +75,6 @@ async def cmd_start(msg: types.Message, state: FSMContext):
     kb = await get_welcome_kb(me.username)
     await msg.answer(WELCOME_TEXT, reply_markup=kb)
 
-# 👇 HELP COMMAND 
 @dp.message(Command("help"))
 async def cmd_help(msg: types.Message):
     if msg.chat.type != "private": return
@@ -85,9 +84,10 @@ async def cmd_help(msg: types.Message):
         "• Send <code>/setwelcome</code> or <code>/setleft</code> in my DM.\n"
         "• Forward a message from your channel.\n"
         "• Type your custom text.\n\n"
-        "<b>2. Auto-Delete Keyword Filters (Use in Group):</b>\n"
-        "• <code>/addfilter &lt;word&gt; &lt;reply_text&gt;</code> - Add auto-reply (Deletes after 1 hour)\n"
-        "• <code>/delfilter &lt;word&gt;</code> - Delete a filter manually\n"
+        "<b>2. Group Filters (Bot replies auto-delete after 1 hr):</b>\n"
+        "• <code>/addfilter &lt;word&gt; &lt;reply_text&gt;</code> - Add permanent filter\n"
+        "• <code>/delfilter &lt;word&gt;</code> - Delete a single filter\n"
+        "• <code>/delallfilters</code> - Delete all filters in the group\n"
         "• <code>/filters</code> - View active filters\n\n"
         "<i>Note: You must be an Admin to use these commands.</i>"
     )
@@ -151,7 +151,7 @@ async def cmd_cancel(msg: types.Message, state: FSMContext):
     await state.clear()
     await msg.answer("❌ Process cancelled.")
 
-# --- GROUP FILTER COMMANDS (1-HOUR AUTO DELETE) ---
+# --- GROUP FILTER COMMANDS (PERMANENT FILTERS) ---
 @dp.message(Command("addfilter"))
 async def cmd_addfilter(msg: types.Message):
     if msg.chat.type in ['private', 'channel']: return
@@ -170,15 +170,9 @@ async def cmd_addfilter(msg: types.Message):
     if chat_id not in chat_settings: chat_settings[chat_id] = {}
     if 'filters' not in chat_settings[chat_id]: chat_settings[chat_id]['filters'] = {}
     
-    # 3600 seconds = 1 hour
-    expires_at = time.time() + 3600 
-    
-    chat_settings[chat_id]['filters'][keyword] = {
-        'reply': reply_text,
-        'expires_at': expires_at
-    }
+    chat_settings[chat_id]['filters'][keyword] = reply_text
     save_settings(chat_settings)
-    await msg.reply(f"✅ Filter added! It will automatically expire in <b>1 Hour</b>.\nWhen someone says <b>{keyword}</b>, I will reply with:\n{reply_text}")
+    await msg.reply(f"✅ Permanent Filter added!\nWhen someone says <b>{keyword}</b>, I will reply with:\n{reply_text}\n\n<i>(My reply will auto-delete after 1 Hour)</i>")
 
 @dp.message(Command("delfilter"))
 async def cmd_delfilter(msg: types.Message):
@@ -197,35 +191,36 @@ async def cmd_delfilter(msg: types.Message):
     if chat_id in chat_settings and 'filters' in chat_settings[chat_id] and keyword in chat_settings[chat_id]['filters']:
         del chat_settings[chat_id]['filters'][keyword]
         save_settings(chat_settings)
-        await msg.reply(f"🗑️ Filter for <b>{keyword}</b> deleted manually.")
+        await msg.reply(f"🗑️ Filter for <b>{keyword}</b> deleted.")
     else:
         await msg.reply("❌ Keyword not found in active filters.")
+
+# 👇 NAYA COMMAND: ALL FILTERS DELETE
+@dp.message(Command("delallfilters"))
+async def cmd_delallfilters(msg: types.Message):
+    if msg.chat.type in ['private', 'channel']: return
+    member = await bot.get_chat_member(msg.chat.id, msg.from_user.id)
+    if member.status not in ['administrator', 'creator']: return
+
+    chat_id = str(msg.chat.id)
+
+    if chat_id in chat_settings and 'filters' in chat_settings[chat_id] and chat_settings[chat_id]['filters']:
+        chat_settings[chat_id]['filters'].clear()
+        save_settings(chat_settings)
+        await msg.reply("🗑️ ✅ All active filters in this group have been successfully deleted.")
+    else:
+        await msg.reply("❌ No active filters found to delete.")
 
 @dp.message(Command("filters"))
 async def cmd_filters(msg: types.Message):
     if msg.chat.type in ['private', 'channel']: return
     chat_id = str(msg.chat.id)
-    current_time = time.time()
-    active_filters = []
-    changes_made = False
 
-    if chat_id in chat_settings and 'filters' in chat_settings[chat_id]:
-        # Using list() to avoid dictionary changed size during iteration error
-        for k, v in list(chat_settings[chat_id]['filters'].items()):
-            # Handle old string filters if any exist, or check expiration
-            if isinstance(v, dict) and current_time > v.get('expires_at', 0):
-                del chat_settings[chat_id]['filters'][k]
-                changes_made = True
-                continue
-            active_filters.append(f"• <code>{k}</code>")
-        
-        if changes_made:
-            save_settings(chat_settings)
-
-    if active_filters:
-        await msg.reply(f"📋 <b>Active Filters (Expiring within 1 hr):</b>\n" + "\n".join(active_filters))
+    if chat_id in chat_settings and 'filters' in chat_settings[chat_id] and chat_settings[chat_id]['filters']:
+        active_filters = "\n".join([f"• <code>{k}</code>" for k in chat_settings[chat_id]['filters'].keys()])
+        await msg.reply(f"📋 <b>Permanent Active Filters:</b>\n{active_filters}")
     else:
-        await msg.reply("No active filters in this group right now.")
+        await msg.reply("No active filters in this group.")
 
 # --- AUTO APPROVE ---
 @dp.chat_join_request()
@@ -249,7 +244,7 @@ async def on_chat_member_update(update: types.ChatMemberUpdated):
             try: await bot.send_message(chat_id=user.id, text=final_msg)
             except Exception: pass 
 
-# 👇 KEYWORD FILTER LISTENER (With Auto-Delete logic)
+# 👇 KEYWORD FILTER LISTENER (BOT REPLIES & TRACKS THEM)
 @dp.message(F.text)
 async def filter_handler(msg: types.Message):
     if msg.chat.type == 'private' or msg.text.startswith('/'): return
@@ -257,23 +252,45 @@ async def filter_handler(msg: types.Message):
     
     if chat_id in chat_settings and 'filters' in chat_settings[chat_id]:
         text_lower = msg.text.lower()
-        current_time = time.time()
-        changes_made = False
         
-        for keyword, data in list(chat_settings[chat_id]['filters'].items()):
+        for keyword, reply_text in chat_settings[chat_id]['filters'].items():
             if keyword in text_lower:
-                # Agar filter ka time nikal gaya hai (1 hour over)
-                if isinstance(data, dict) and current_time > data.get('expires_at', 0):
-                    del chat_settings[chat_id]['filters'][keyword]
-                    changes_made = True
-                    continue # Dusre keywords check karo
+                sent_msg = await msg.reply(reply_text)
                 
-                # Agar valid hai toh reply bhejo
-                reply_text = data['reply'] if isinstance(data, dict) else data
-                await msg.reply(reply_text)
+                if 'cleanup' not in chat_settings:
+                    chat_settings['cleanup'] = []
+                    
+                chat_settings['cleanup'].append({
+                    'chat_id': sent_msg.chat.id,
+                    'message_id': sent_msg.message_id,
+                    'delete_at': time.time() + 3600 
+                })
+                save_settings(chat_settings)
                 break 
-                
+
+# 👇 BACKGROUND TASK: AUTO-DELETE REPLIES
+async def cleanup_background_task():
+    while True:
+        await asyncio.sleep(60)
+        if 'cleanup' not in chat_settings or not chat_settings['cleanup']:
+            continue
+
+        current_time = time.time()
+        remaining_msgs = []
+        changes_made = False
+
+        for item in chat_settings['cleanup']:
+            if current_time >= item['delete_at']:
+                try:
+                    await bot.delete_message(chat_id=item['chat_id'], message_id=item['message_id'])
+                except Exception:
+                    pass
+                changes_made = True
+            else:
+                remaining_msgs.append(item)
+
         if changes_made:
+            chat_settings['cleanup'] = remaining_msgs
             save_settings(chat_settings)
 
 # --- SERVER ---
@@ -288,6 +305,8 @@ async def start_dummy_server():
 
 async def main():
     await start_dummy_server()
+    asyncio.create_task(cleanup_background_task()) 
+    logging.info("🤖 Safe Auto-Approve Bot is running...")
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
