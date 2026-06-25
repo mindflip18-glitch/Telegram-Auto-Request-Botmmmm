@@ -2,9 +2,10 @@ import os
 import json
 import logging
 import asyncio
+import time
 from aiohttp import web
 from dotenv import load_dotenv
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.client.bot import DefaultBotProperties
 from aiogram.enums.parse_mode import ParseMode
 from aiogram.filters import CommandStart, Command
@@ -74,47 +75,42 @@ async def cmd_start(msg: types.Message, state: FSMContext):
     kb = await get_welcome_kb(me.username)
     await msg.answer(WELCOME_TEXT, reply_markup=kb)
 
-# 👇 HELP COMMAND
+# 👇 HELP COMMAND 
 @dp.message(Command("help"))
 async def cmd_help(msg: types.Message):
     if msg.chat.type != "private": return
     help_text = (
-        "📖 <b>How to Setup Custom Messages:</b>\n\n"
-        "<b>1. To SET a message:</b>\n"
-        "• Send <code>/setwelcome</code> or <code>/setleft</code>\n"
-        "• Forward any message from your channel to this bot.\n"
-        "• Type and send your new custom text message.\n\n"
-        "<b>2. To Turn OFF a message:</b>\n"
-        "• Send <code>/offwelcome</code> or <code>/offleft</code>\n"
-        "• Forward any message from your channel to this bot.\n\n"
-        "<i>Note: You must be an Admin in the channel, and the bot must also be added as an Admin with invite permissions.</i>"
+        "📖 <b>How to Use This Bot:</b>\n\n"
+        "<b>1. Channel DMs (Welcome/Left):</b>\n"
+        "• Send <code>/setwelcome</code> or <code>/setleft</code> in my DM.\n"
+        "• Forward a message from your channel.\n"
+        "• Type your custom text.\n\n"
+        "<b>2. Auto-Delete Keyword Filters (Use in Group):</b>\n"
+        "• <code>/addfilter &lt;word&gt; &lt;reply_text&gt;</code> - Add auto-reply (Deletes after 1 hour)\n"
+        "• <code>/delfilter &lt;word&gt;</code> - Delete a filter manually\n"
+        "• <code>/filters</code> - View active filters\n\n"
+        "<i>Note: You must be an Admin to use these commands.</i>"
     )
     await msg.answer(help_text)
 
-# 👇 STEP 1: Command trigger (Set & Off)
+# --- CHANNEL DM SETUP (WELCOME/LEFT) ---
 @dp.message(Command("setleft", "setwelcome", "offleft", "offwelcome"))
 async def start_setting_msg(msg: types.Message, state: FSMContext):
     if msg.chat.type != "private": return
-    
     cmd = msg.text.split()[0]
     msg_type = "left_msg" if cmd in ["/setleft", "/offleft"] else "welcome_msg"
     action = "off" if cmd.startswith("/off") else "set"
-    
     await state.update_data(msg_type=msg_type, action=action)
     await state.set_state(MsgSetup.waiting_for_forward)
-    
     await msg.answer("📢 Please <b>Forward</b> any message from your Channel here.")
 
-# 👇 STEP 2: Forwarded message check
 @dp.message(MsgSetup.waiting_for_forward)
 async def process_forwarded_msg(msg: types.Message, state: FSMContext):
     if not msg.forward_origin or msg.forward_origin.type != 'channel':
         await msg.answer("❌ This is not a forwarded message from a channel. Please try again or send /cancel.")
         return
-
     channel_id = str(msg.forward_origin.chat.id)
     channel_title = msg.forward_origin.chat.title
-
     try:
         member = await bot.get_chat_member(chat_id=channel_id, user_id=msg.from_user.id)
         if member.status not in ['administrator', 'creator']:
@@ -125,38 +121,28 @@ async def process_forwarded_msg(msg: types.Message, state: FSMContext):
         return
 
     data = await state.get_data()
-    msg_type = data['msg_type']
-    action = data['action']
-    msg_type_text = "Left" if msg_type == "left_msg" else "Welcome"
-
-    if channel_id not in chat_settings:
-        chat_settings[channel_id] = {}
+    msg_type, action = data['msg_type'], data['action']
+    if channel_id not in chat_settings: chat_settings[channel_id] = {}
 
     if action == "off":
         chat_settings[channel_id][msg_type] = "OFF"
         save_settings(chat_settings)
-        await msg.answer(f"✅ The {msg_type_text} Message for '{channel_title}' has been turned <b>OFF</b>.")
+        await msg.answer(f"✅ The message for '{channel_title}' has been turned <b>OFF</b>.")
         await state.clear()
         return
 
     await state.update_data(channel_id=channel_id, channel_title=channel_title)
     await state.set_state(MsgSetup.waiting_for_text)
-    await msg.answer(f"✅ Channel verified: <b>{channel_title}</b>\n\n📝 Now, type and send your new <b>{msg_type_text} Message</b>.")
+    await msg.answer(f"✅ Channel verified: <b>{channel_title}</b>\n\n📝 Now, type and send your new custom Message.")
 
-# 👇 STEP 3: Save custom text
 @dp.message(MsgSetup.waiting_for_text)
 async def process_custom_msg(msg: types.Message, state: FSMContext):
     if not msg.text: 
         await msg.answer("❌ Please send text only.")
         return
-
     data = await state.get_data()
-    channel_id = data['channel_id']
-    msg_type = data['msg_type']
-    
-    chat_settings[channel_id][msg_type] = msg.html_text 
+    chat_settings[data['channel_id']][data['msg_type']] = msg.html_text 
     save_settings(chat_settings)
-
     await msg.answer(f"✅ Message successfully set:\n\n{msg.html_text}")
     await state.clear()
 
@@ -165,42 +151,132 @@ async def cmd_cancel(msg: types.Message, state: FSMContext):
     await state.clear()
     await msg.answer("❌ Process cancelled.")
 
-# 👇 AUTO APPROVE & WELCOME MSG
+# --- GROUP FILTER COMMANDS (1-HOUR AUTO DELETE) ---
+@dp.message(Command("addfilter"))
+async def cmd_addfilter(msg: types.Message):
+    if msg.chat.type in ['private', 'channel']: return
+    member = await bot.get_chat_member(msg.chat.id, msg.from_user.id)
+    if member.status not in ['administrator', 'creator']: return
+
+    args = msg.text.split(maxsplit=2)
+    if len(args) < 3:
+        await msg.reply("❌ Format: <code>/addfilter keyword your reply message</code>")
+        return
+
+    keyword = args[1].lower()
+    reply_text = args[2]
+    chat_id = str(msg.chat.id)
+
+    if chat_id not in chat_settings: chat_settings[chat_id] = {}
+    if 'filters' not in chat_settings[chat_id]: chat_settings[chat_id]['filters'] = {}
+    
+    # 3600 seconds = 1 hour
+    expires_at = time.time() + 3600 
+    
+    chat_settings[chat_id]['filters'][keyword] = {
+        'reply': reply_text,
+        'expires_at': expires_at
+    }
+    save_settings(chat_settings)
+    await msg.reply(f"✅ Filter added! It will automatically expire in <b>1 Hour</b>.\nWhen someone says <b>{keyword}</b>, I will reply with:\n{reply_text}")
+
+@dp.message(Command("delfilter"))
+async def cmd_delfilter(msg: types.Message):
+    if msg.chat.type in ['private', 'channel']: return
+    member = await bot.get_chat_member(msg.chat.id, msg.from_user.id)
+    if member.status not in ['administrator', 'creator']: return
+
+    args = msg.text.split(maxsplit=1)
+    if len(args) < 2:
+        await msg.reply("❌ Format: <code>/delfilter keyword</code>")
+        return
+
+    keyword = args[1].lower()
+    chat_id = str(msg.chat.id)
+
+    if chat_id in chat_settings and 'filters' in chat_settings[chat_id] and keyword in chat_settings[chat_id]['filters']:
+        del chat_settings[chat_id]['filters'][keyword]
+        save_settings(chat_settings)
+        await msg.reply(f"🗑️ Filter for <b>{keyword}</b> deleted manually.")
+    else:
+        await msg.reply("❌ Keyword not found in active filters.")
+
+@dp.message(Command("filters"))
+async def cmd_filters(msg: types.Message):
+    if msg.chat.type in ['private', 'channel']: return
+    chat_id = str(msg.chat.id)
+    current_time = time.time()
+    active_filters = []
+    changes_made = False
+
+    if chat_id in chat_settings and 'filters' in chat_settings[chat_id]:
+        # Using list() to avoid dictionary changed size during iteration error
+        for k, v in list(chat_settings[chat_id]['filters'].items()):
+            # Handle old string filters if any exist, or check expiration
+            if isinstance(v, dict) and current_time > v.get('expires_at', 0):
+                del chat_settings[chat_id]['filters'][k]
+                changes_made = True
+                continue
+            active_filters.append(f"• <code>{k}</code>")
+        
+        if changes_made:
+            save_settings(chat_settings)
+
+    if active_filters:
+        await msg.reply(f"📋 <b>Active Filters (Expiring within 1 hr):</b>\n" + "\n".join(active_filters))
+    else:
+        await msg.reply("No active filters in this group right now.")
+
+# --- AUTO APPROVE ---
 @dp.chat_join_request()
 async def auto_approve_join_request(update: types.ChatJoinRequest):
-    user_id = update.from_user.id
-    chat_id = str(update.chat.id)
-    
+    user_id, chat_id = update.from_user.id, str(update.chat.id)
     welcome_msg = chat_settings.get(chat_id, {}).get('welcome_msg')
     if welcome_msg and welcome_msg != "OFF":
-        try:
-            await bot.send_message(chat_id=user_id, text=welcome_msg)
-        except Exception:
-            pass 
-    
-    try:
-        await update.approve()
-    except Exception as e:
-        logging.error(f"Failed to approve: {e}")
+        try: await bot.send_message(chat_id=user_id, text=welcome_msg)
+        except Exception: pass 
+    try: await update.approve()
+    except Exception as e: logging.error(f"Failed to approve: {e}")
 
-# 👇 LEFT MSG
+# --- LEFT MSG ---
 @dp.chat_member()
 async def on_chat_member_update(update: types.ChatMemberUpdated):
-    user = update.from_user
-    chat_id = str(update.chat.id)
-
+    user, chat_id = update.from_user, str(update.chat.id)
     if update.old_chat_member.status in ['member', 'administrator'] and update.new_chat_member.status in ['left', 'kicked']:
         default_left = "🌟 ALL DRAMA DIRECT FILES AVAILABLE 🗃️\n\nhttps://t.me/+amS1Q3R4_Qg5NjU1\nhttps://t.me/+amS1Q3R4_Qg5NjU1"
-        
         final_msg = chat_settings.get(chat_id, {}).get('left_msg', default_left)
-        
         if final_msg != "OFF":
-            try:
-                await bot.send_message(chat_id=user.id, text=final_msg)
-            except Exception:
-                pass 
+            try: await bot.send_message(chat_id=user.id, text=final_msg)
+            except Exception: pass 
 
-# 👇 SERVER
+# 👇 KEYWORD FILTER LISTENER (With Auto-Delete logic)
+@dp.message(F.text)
+async def filter_handler(msg: types.Message):
+    if msg.chat.type == 'private' or msg.text.startswith('/'): return
+    chat_id = str(msg.chat.id)
+    
+    if chat_id in chat_settings and 'filters' in chat_settings[chat_id]:
+        text_lower = msg.text.lower()
+        current_time = time.time()
+        changes_made = False
+        
+        for keyword, data in list(chat_settings[chat_id]['filters'].items()):
+            if keyword in text_lower:
+                # Agar filter ka time nikal gaya hai (1 hour over)
+                if isinstance(data, dict) and current_time > data.get('expires_at', 0):
+                    del chat_settings[chat_id]['filters'][keyword]
+                    changes_made = True
+                    continue # Dusre keywords check karo
+                
+                # Agar valid hai toh reply bhejo
+                reply_text = data['reply'] if isinstance(data, dict) else data
+                await msg.reply(reply_text)
+                break 
+                
+        if changes_made:
+            save_settings(chat_settings)
+
+# --- SERVER ---
 async def handle_ping(request): return web.Response(text="Running!")
 async def start_dummy_server():
     app = web.Application()
