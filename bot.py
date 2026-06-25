@@ -15,7 +15,6 @@ from aiogram.fsm.state import State, StatesGroup
 # Logging setup
 logging.basicConfig(level=logging.INFO)
 
-# Load environment variables
 load_dotenv()
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 
@@ -40,7 +39,7 @@ def save_settings(data):
 
 chat_settings = load_settings()
 
-# --- FSM STATES SETUP ---
+# --- FSM STATES ---
 class MsgSetup(StatesGroup):
     waiting_for_forward = State()
     waiting_for_text = State()
@@ -50,13 +49,12 @@ WELCOME_TEXT = (
     "┃  🤖 <b>SAFE AUTO REQUEST BOT</b>\n"
     "┃━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     "┃\n"
-    "┃  📌 <b>What this bot does:</b>\n"
-    "┃  • Auto-join groups/channels\n"
-    "┃  • Custom Welcome & Left Messages\n"
-    "┃\n"
-    "┃  ⚡ <b>Commands:</b>\n"
-    "┃  /setleft - Set goodbye message\n"
+    "┃  📌 <b>Commands:</b>\n"
+    "┃  /help - Learn how to use this bot\n"
     "┃  /setwelcome - Set welcome message\n"
+    "┃  /setleft - Set goodbye message\n"
+    "┃  /offwelcome - Turn OFF welcome\n"
+    "┃  /offleft - Turn OFF goodbye\n"
     "┃  /cancel - Cancel process\n"
     "┃\n"
     "╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯"
@@ -76,152 +74,145 @@ async def cmd_start(msg: types.Message, state: FSMContext):
     kb = await get_welcome_kb(me.username)
     await msg.answer(WELCOME_TEXT, reply_markup=kb)
 
-# 👇 STEP 1: Command trigger
-@dp.message(Command("setleft", "setwelcome"))
+# 👇 HELP COMMAND
+@dp.message(Command("help"))
+async def cmd_help(msg: types.Message):
+    if msg.chat.type != "private": return
+    help_text = (
+        "📖 <b>How to Setup Custom Messages:</b>\n\n"
+        "<b>1. To SET a message:</b>\n"
+        "• Send <code>/setwelcome</code> or <code>/setleft</code>\n"
+        "• Forward any message from your channel to this bot.\n"
+        "• Type and send your new custom text message.\n\n"
+        "<b>2. To Turn OFF a message:</b>\n"
+        "• Send <code>/offwelcome</code> or <code>/offleft</code>\n"
+        "• Forward any message from your channel to this bot.\n\n"
+        "<i>Note: You must be an Admin in the channel, and the bot must also be added as an Admin with invite permissions.</i>"
+    )
+    await msg.answer(help_text)
+
+# 👇 STEP 1: Command trigger (Set & Off)
+@dp.message(Command("setleft", "setwelcome", "offleft", "offwelcome"))
 async def start_setting_msg(msg: types.Message, state: FSMContext):
     if msg.chat.type != "private": return
     
-    # Check kya set karna hai (left ya welcome)
-    msg_type = "left_msg" if msg.text.startswith("/setleft") else "welcome_msg"
+    cmd = msg.text.split()[0]
+    msg_type = "left_msg" if cmd in ["/setleft", "/offleft"] else "welcome_msg"
+    action = "off" if cmd.startswith("/off") else "set"
     
-    await state.update_data(msg_type=msg_type)
+    await state.update_data(msg_type=msg_type, action=action)
     await state.set_state(MsgSetup.waiting_for_forward)
     
-    await msg.answer(
-        "📢 <b>STEP 1: Channel Select Karein</b>\n\n"
-        "Kripya apne us Channel se koi bhi ek message yahan <b>Forward</b> karein, jiske liye aap message set karna chahte hain.\n\n"
-        "<i>(Cancel karne ke liye /cancel bhejein)</i>"
-    )
+    await msg.answer("📢 Please <b>Forward</b> any message from your Channel here.")
 
-# 👇 STEP 2: Forwarded message receive karna
+# 👇 STEP 2: Forwarded message check
 @dp.message(MsgSetup.waiting_for_forward)
 async def process_forwarded_msg(msg: types.Message, state: FSMContext):
-    # Check agar user ne channel se forward kiya hai
     if not msg.forward_origin or msg.forward_origin.type != 'channel':
-        await msg.answer("❌ Ye kisi channel ka forwarded message nahi hai. Kripya channel se ek message forward karein (ya /cancel likhein).")
+        await msg.answer("❌ This is not a forwarded message from a channel. Please try again or send /cancel.")
         return
 
     channel_id = str(msg.forward_origin.chat.id)
     channel_title = msg.forward_origin.chat.title
 
-    # Security check: Admin hai ya nahi?
     try:
         member = await bot.get_chat_member(chat_id=channel_id, user_id=msg.from_user.id)
         if member.status not in ['administrator', 'creator']:
-            await msg.answer(f"❌ Aap '{channel_title}' ke Admin nahi hain! Kisi aur channel ka message forward karein.")
+            await msg.answer("❌ You are not an Admin of this channel!")
             return
     except Exception:
-        await msg.answer(f"❌ Error! Pehle bot ko '{channel_title}' mein Admin banayein, uske baad message forward karein.")
+        await msg.answer("❌ Please make the bot an Admin in your channel first.")
         return
 
-    # Data save karo aur agle step par bhejo
+    data = await state.get_data()
+    msg_type = data['msg_type']
+    action = data['action']
+    msg_type_text = "Left" if msg_type == "left_msg" else "Welcome"
+
+    if channel_id not in chat_settings:
+        chat_settings[channel_id] = {}
+
+    if action == "off":
+        chat_settings[channel_id][msg_type] = "OFF"
+        save_settings(chat_settings)
+        await msg.answer(f"✅ The {msg_type_text} Message for '{channel_title}' has been turned <b>OFF</b>.")
+        await state.clear()
+        return
+
     await state.update_data(channel_id=channel_id, channel_title=channel_title)
     await state.set_state(MsgSetup.waiting_for_text)
+    await msg.answer(f"✅ Channel verified: <b>{channel_title}</b>\n\n📝 Now, type and send your new <b>{msg_type_text} Message</b>.")
 
-    data = await state.get_data()
-    msg_type_text = "Left (Goodbye)" if data['msg_type'] == "left_msg" else "Welcome"
-
-    await msg.answer(
-        f"✅ <b>Channel mil gaya:</b> {channel_title}\n\n"
-        f"📝 <b>STEP 2: Message Bhejein</b>\n\n"
-        f"Ab apna naya <b>{msg_type_text} Message</b> yahan type karke send karein.\n"
-        "<i>(Aap emoji, links aur formatting ka use kar sakte hain)</i>"
-    )
-
-# 👇 STEP 3: Custom message receive karna aur save karna
+# 👇 STEP 3: Save custom text
 @dp.message(MsgSetup.waiting_for_text)
 async def process_custom_msg(msg: types.Message, state: FSMContext):
-    if not msg.text:
-        await msg.answer("❌ Kripya text message send karein.")
+    if not msg.text: 
+        await msg.answer("❌ Please send text only.")
         return
 
     data = await state.get_data()
     channel_id = data['channel_id']
     msg_type = data['msg_type']
-    channel_title = data['channel_title']
-
-    if channel_id not in chat_settings:
-        chat_settings[channel_id] = {}
-
-    # msg.html_text use kiya taaki bold/links waisa hi save ho
+    
     chat_settings[channel_id][msg_type] = msg.html_text 
     save_settings(chat_settings)
 
-    msg_type_text = "Left" if msg_type == "left_msg" else "Welcome"
-
-    await msg.answer(
-        f"✅ <b>Badhai ho!</b> 🎉\n\n"
-        f"'{channel_title}' ke liye aapka <b>{msg_type_text} Message</b> set ho gaya hai:\n\n"
-        f"{msg.html_text}"
-    )
+    await msg.answer(f"✅ Message successfully set:\n\n{msg.html_text}")
     await state.clear()
 
-# 👇 CANCEL COMMAND (Process rokne ke liye)
 @dp.message(Command("cancel"))
 async def cmd_cancel(msg: types.Message, state: FSMContext):
-    current_state = await state.get_state()
-    if current_state is None:
-        return
     await state.clear()
-    await msg.answer("❌ Process cancel kar diya gaya hai.")
+    await msg.answer("❌ Process cancelled.")
 
-# 👇 AUTO APPROVE & CUSTOM WELCOME
+# 👇 AUTO APPROVE & WELCOME MSG
 @dp.chat_join_request()
 async def auto_approve_join_request(update: types.ChatJoinRequest):
     user_id = update.from_user.id
     chat_id = str(update.chat.id)
     
-    if chat_id in chat_settings and 'welcome_msg' in chat_settings[chat_id]:
+    welcome_msg = chat_settings.get(chat_id, {}).get('welcome_msg')
+    if welcome_msg and welcome_msg != "OFF":
         try:
-            await bot.send_message(chat_id=user_id, text=chat_settings[chat_id]['welcome_msg'])
+            await bot.send_message(chat_id=user_id, text=welcome_msg)
         except Exception:
             pass 
     
     try:
         await update.approve()
     except Exception as e:
-        logging.error(f"Failed to approve user: {e}")
+        logging.error(f"Failed to approve: {e}")
 
-# 👇 CUSTOM LEFT MESSAGE HANDLER
+# 👇 LEFT MSG
 @dp.chat_member()
 async def on_chat_member_update(update: types.ChatMemberUpdated):
     user = update.from_user
     chat_id = str(update.chat.id)
 
     if update.old_chat_member.status in ['member', 'administrator'] and update.new_chat_member.status in ['left', 'kicked']:
-        default_left = (
-            "🌟 ALL DRAMA DIRECT FILES AVAILABLE 🗃️\n\n"
-            "https://t.me/+amS1Q3R4_Qg5NjU1\n"
-            "https://t.me/+amS1Q3R4_Qg5NjU1"
-        )
+        default_left = "🌟 ALL DRAMA DIRECT FILES AVAILABLE 🗃️\n\nhttps://t.me/+amS1Q3R4_Qg5NjU1\nhttps://t.me/+amS1Q3R4_Qg5NjU1"
         
         final_msg = chat_settings.get(chat_id, {}).get('left_msg', default_left)
         
-        try:
-            await bot.send_message(chat_id=user.id, text=final_msg)
-        except Exception:
-            pass 
+        if final_msg != "OFF":
+            try:
+                await bot.send_message(chat_id=user.id, text=final_msg)
+            except Exception:
+                pass 
 
-# 👇 DUMMY WEB SERVER (Render ke liye)
-async def handle_ping(request):
-    return web.Response(text="Bot is running beautifully! 🚀")
-
+# 👇 SERVER
+async def handle_ping(request): return web.Response(text="Running!")
 async def start_dummy_server():
     app = web.Application()
     app.router.add_get('/', handle_ping)
     runner = web.AppRunner(app)
     await runner.setup()
-    port = int(os.environ.get("PORT", 8080))
-    site = web.TCPSite(runner, '0.0.0.0', port)
+    site = web.TCPSite(runner, '0.0.0.0', int(os.environ.get("PORT", 8080)))
     await site.start()
 
 async def main():
     await start_dummy_server()
-    logging.info("🤖 Safe Auto-Approve Bot is running...")
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("Bot stopped.")
+    asyncio.run(main())
