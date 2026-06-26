@@ -151,12 +151,10 @@ async def cmd_cancel(msg: types.Message, state: FSMContext):
     await state.clear()
     await msg.answer("❌ Process cancelled.")
 
-# 👇 SMART ADMIN CHECK (Personal + Anonymous Support)
+# --- SMART ADMIN CHECK ---
 async def is_admin(msg: types.Message) -> bool:
-    # Agar chat as a Group (Anonymous) aayi hai
     if msg.sender_chat and str(msg.sender_chat.id) == str(msg.chat.id):
         return True
-    # Agar personal ID se aayi hai
     try:
         member = await bot.get_chat_member(msg.chat.id, msg.from_user.id)
         return member.status in ['administrator', 'creator']
@@ -254,7 +252,7 @@ async def on_chat_member_update(update: types.ChatMemberUpdated):
             try: await bot.send_message(chat_id=user.id, text=final_msg)
             except Exception: pass 
 
-# 👇 KEYWORD FILTER LISTENER 
+# 👇 KEYWORD FILTER LISTENER (LINK PREVIEW DISABLED HERE)
 @dp.message(F.text)
 async def filter_handler(msg: types.Message):
     if msg.chat.type == 'private' or msg.text.startswith('/'): return
@@ -265,7 +263,8 @@ async def filter_handler(msg: types.Message):
         
         for keyword, reply_text in chat_settings[chat_id]['filters'].items():
             if keyword in text_lower:
-                sent_msg = await msg.reply(reply_text)
+                # Is line me link preview band kar diya hai 👇
+                sent_msg = await msg.reply(reply_text, link_preview_options=types.LinkPreviewOptions(is_disabled=True))
                 
                 if 'cleanup' not in chat_settings:
                     chat_settings['cleanup'] = []
