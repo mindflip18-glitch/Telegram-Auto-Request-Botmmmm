@@ -3,6 +3,7 @@ import logging
 import asyncio
 import time
 import random
+import re  # 👈 NAYA TOOL ADD KIYA HAI (Exact Word Matching ke liye)
 from aiohttp import web
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -61,7 +62,7 @@ def get_greeting():
     elif hour < 20: return "ɢᴏᴏᴅ ᴇᴠᴇɴɪɴɢ 🌥️"
     else: return "ɢᴏᴏᴅ ɴɪɢʜᴛ 🌙"
 
-# --- PREMIUM START COMMAND (WITH IMAGE & BUTTONS) ---
+# --- PREMIUM START COMMAND ---
 @dp.message(CommandStart())
 async def cmd_start(msg: types.Message, state: FSMContext):
     if msg.chat.type != "private": return
@@ -72,14 +73,12 @@ async def cmd_start(msg: types.Message, state: FSMContext):
     user_name = msg.from_user.first_name.upper() if msg.from_user.first_name else "USER"
     bot_name = me.first_name.upper() if me.first_name else "BOT"
     
-    # 👇 PROBLEM 1 FIX: Pura font ab BOLD (<b>) mein hai
     caption = (
         f"🚩 <b>JAI SHRI RAM</b> 🚩\n\n"
         f"<b>HEY {user_name}</b>, <b>{greeting}</b>\n\n"
         f"🤖 <b>ɪ ᴀᴍ {bot_name}, ᴛʜᴇ ᴍᴏꜱᴛ ᴘᴏᴡᴇʀꜰᴜʟ ᴀᴜᴛᴏ ꜰɪʟᴛᴇʀ ʙᴏᴛ ᴡɪᴛʜ ᴘʀᴇᴍɪᴜᴍ ꜰᴇᴀᴛᴜʀᴇꜱ.</b>"
     )
     
-    # 👇 PROBLEM 2 FIX: Group aur Channel dono ke buttons aapke screenshot layout ke hisaab se
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text='🔰 ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ 🔰', url=f'https://t.me/{me.username}?startgroup=true')],
         [InlineKeyboardButton(text='ʜᴇʟᴘ 📢', callback_data='help_menu'),
@@ -94,7 +93,7 @@ async def cmd_start(msg: types.Message, state: FSMContext):
     try: await msg.answer_photo(photo=IMAGE_URL, caption=caption, reply_markup=kb)
     except: await msg.answer(caption, reply_markup=kb)
 
-# --- CALLBACK MENUS (HELP, ABOUT, EXTRA BUTTONS) ---
+# --- CALLBACK MENUS ---
 @dp.callback_query(F.data == "help_menu")
 async def cb_help(call: CallbackQuery):
     help_text = (
@@ -109,6 +108,7 @@ async def cb_help(call: CallbackQuery):
         "• <code>/filters</code>\n\n"
         "⚡ <b>3. Premium Features (Auto-Active):</b>\n"
         "• <b>Auto-Approve:</b> Channel requests approved instantly.\n"
+        "• <b>Exact Match:</b> Strict word boundary filter triggers.\n"
         "• <b>Big Emoji Reaction:</b> Pop-up animations on triggers.\n"
         "• <b>Auto-Edit:</b> Filter replies edit after 1 hour."
     )
@@ -125,7 +125,7 @@ async def cb_about(call: CallbackQuery):
         f"<b>• ʟᴀɴɢᴜᴀɢᴇ:</b> Python 3\n"
         f"<b>• ꜰʀᴀᴍᴇᴡᴏʀᴋ:</b> Aiogram 3.x\n"
         f"<b>• ᴅᴀᴛᴀʙᴀꜱᴇ:</b> MongoDB\n\n"
-        f"<i>This bot provides powerful auto-request approval, dynamic keyword filtering with overwrite protection, and 1-hour auto-edit features for Telegram Groups & Channels.</i>"
+        f"<i>This bot provides powerful auto-request approval, dynamic EXACT keyword filtering with overwrite protection, and 1-hour auto-edit features for Telegram Groups & Channels.</i>"
     )
     back_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='🔙 ʙᴀᴄᴋ', callback_data='start_menu')]])
     try: await call.message.edit_caption(caption=about_text, reply_markup=back_kb)
@@ -321,7 +321,7 @@ async def on_chat_member_update(update: types.ChatMemberUpdated):
             try: await bot.send_message(chat_id=user.id, text=final_msg)
             except: pass
 
-# --- MAIN LISTENER (ONLY FILTERS + BIG EMOJI - NO AI) ---
+# --- MAIN LISTENER (FILTERS + BIG EMOJI) ---
 @dp.message(F.text)
 async def filter_handler(msg: types.Message):
     if msg.text.startswith('/'): return
@@ -329,7 +329,12 @@ async def filter_handler(msg: types.Message):
     if msg.chat.type != 'private':
         chat_data = await get_chat_data(str(msg.chat.id))
         for kw, reply in chat_data.get('filters', {}).items():
-            if kw in msg.text.lower():
+            
+            # 👇 PROBLEM FIX: Regex exact word matching logic yahan lagayi hai
+            # \b lagane se sirf wahi word trigger hoga, uska koi hissa nahi
+            pattern = r'\b' + re.escape(kw.lower()) + r'\b'
+            
+            if re.search(pattern, msg.text.lower()):
                 emoji_list = ["🔥", "❤️", "👍", "🎉", "🍿", "💯", "🚀", "😍", "👏"]
                 try: await msg.react([types.ReactionTypeEmoji(emoji=random.choice(emoji_list))], is_big=True)
                 except: pass
@@ -353,7 +358,6 @@ async def cleanup_task():
             for item in chat.get('cleanup', []):
                 if time.time() >= item['delete_at']:
                     try:
-                        # 👇 PROBLEM 3 FIX: Yahan ka text ab poori tarah BOLD (<b>) aur premium font me hai
                         await bot.edit_message_text(
                             chat_id=item['chat_id'], 
                             message_id=item['message_id'],
@@ -366,7 +370,7 @@ async def cleanup_task():
 
 # --- RENDER WEB SERVER (ANTI-CRASH) ---
 async def handle_ping(request): 
-    return web.Response(text="Bot is running smoothly on Render without AI!")
+    return web.Response(text="Bot is running smoothly on Render!")
 
 async def start_dummy_server():
     app = web.Application()
