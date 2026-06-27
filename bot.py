@@ -53,38 +53,115 @@ async def is_admin(msg: types.Message) -> bool:
         return member.status in ['administrator', 'creator']
     except: return False
 
-# --- COMMANDS ---
+def get_greeting():
+    # India ke time (IST) ke hisaab se Greeting dega
+    ist_time = time.time() + (5.5 * 3600)
+    hour = time.gmtime(ist_time).tm_hour
+    if hour < 12: return "ɢᴏᴏᴅ ᴍᴏʀɴɪɴɢ 🌞"
+    elif hour < 17: return "ɢᴏᴏᴅ ᴀꜰᴛᴇʀɴᴏᴏɴ 🌤️"
+    elif hour < 20: return "ɢᴏᴏᴅ ᴇᴠᴇɴɪɴɢ 🌥️"
+    else: return "ɢᴏᴏᴅ ɴɪɢʜᴛ 🌙"
+
+# --- PREMIUM START COMMAND (WITH IMAGE & BUTTONS) ---
 @dp.message(CommandStart())
 async def cmd_start(msg: types.Message, state: FSMContext):
     if msg.chat.type != "private": return
     await state.clear()
     me = await bot.get_me()
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text='➕ Add to Group', url=f'https://t.me/{me.username}?startgroup=true')],
-        [InlineKeyboardButton(text='➕ Add to Channel', url=f'https://t.me/{me.username}?startchannel=start')]
-    ])
-    WELCOME_TEXT = (
-        "╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮\n"
-        "┃  🤖 <b>SAFE AUTO REQUEST BOT</b>\n"
-        "┃━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "┃  📌 <b>Commands:</b>\n"
-        "┃  /help - Learn how to use this bot\n"
-        "┃  /setwelcome - Set welcome message\n"
-        "┃  /setleft - Set goodbye message\n"
-        "┃  /cancel - Cancel process\n"
-        "╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯"
+    
+    greeting = get_greeting()
+    user_name = msg.from_user.first_name.upper() if msg.from_user.first_name else "USER"
+    bot_name = me.first_name.upper() if me.first_name else "BOT"
+    
+    caption = (
+        f"🚩 <b>JAI SHRI RAM</b> 🚩\n\n"
+        f"<b>HEY {user_name}</b>, {greeting}\n\n"
+        f"🤖 <b>ɪ ᴀᴍ {bot_name}</b>, ᴛʜᴇ ᴍᴏꜱᴛ ᴘᴏᴡᴇʀꜰᴜʟ ᴀᴜᴛᴏ ꜰɪʟᴛᴇʀ ʙᴏᴛ ᴡɪᴛʜ ᴘʀᴇᴍɪᴜᴍ ꜰᴇᴀᴛᴜʀᴇꜱ."
     )
-    await msg.answer(WELCOME_TEXT, reply_markup=kb)
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='🔰 ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ 🔰', url=f'https://t.me/{me.username}?startgroup=true')],
+        [InlineKeyboardButton(text='ʜᴇʟᴘ 📢', callback_data='help_menu'),
+         InlineKeyboardButton(text='ᴀʙᴏᴜᴛ 📖', callback_data='about_menu')],
+        [InlineKeyboardButton(text='➕ ᴀᴅᴅ ᴛᴏ ᴄʜᴀɴɴᴇʟ ➕', url=f'https://t.me/{me.username}?startchannel=start')]
+    ])
+    
+    # 👇 YAHAN AAP APNI PHOTO KA LINK DAAL SAKTE HAIN
+    IMAGE_URL = "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=800"
+    
+    try:
+        await msg.answer_photo(photo=IMAGE_URL, caption=caption, reply_markup=kb)
+    except:
+        # Agar image link load nahi hua, toh simple text bhej dega (Anti-crash)
+        await msg.answer(caption, reply_markup=kb)
+
+# --- CALLBACK MENUS (FOR HELP, ABOUT & BACK BUTTONS) ---
+@dp.callback_query(F.data == "help_menu")
+async def cb_help(call: CallbackQuery):
+    help_text = (
+        "📖 <b>Full Command & Feature Guide:</b>\n\n"
+        "📢 <b>1. Channel DMs (Welcome/Goodbye):</b>\n"
+        "• <code>/setwelcome</code> & <code>/setleft</code>\n"
+        "• <code>/offwelcome</code> & <code>/offleft</code>\n\n"
+        "🗃️ <b>2. Group Filters Management:</b>\n"
+        "• <code>/addfilter [keyword] [reply text]</code>\n"
+        "• <code>/delfilter [keyword]</code>\n"
+        "• <code>/delallfilters</code>\n"
+        "• <code>/filters</code>\n\n"
+        "⚡ <b>3. Premium Features (Auto-Active):</b>\n"
+        "• <b>Auto-Approve:</b> Channel requests approved instantly.\n"
+        "• <b>Big Emoji Reaction:</b> Pop-up animations on triggers.\n"
+        "• <b>Auto-Edit:</b> Filter replies edit after 1 hour."
+    )
+    back_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='🔙 ʙᴀᴄᴋ', callback_data='start_menu')]])
+    try: await call.message.edit_caption(caption=help_text, reply_markup=back_kb)
+    except: pass
+
+@dp.callback_query(F.data == "about_menu")
+async def cb_about(call: CallbackQuery):
+    me = await bot.get_me()
+    about_text = (
+        f"🤖 <b>ᴀʙᴏᴜᴛ {me.first_name.upper()}</b>\n\n"
+        f"<b>• ᴅᴇᴠᴇʟᴏᴘᴇʀ:</b> Admin\n"
+        f"<b>• ʟᴀɴɢᴜᴀɢᴇ:</b> Python 3\n"
+        f"<b>• ꜰʀᴀᴍᴇᴡᴏʀᴋ:</b> Aiogram 3.x\n"
+        f"<b>• ᴅᴀᴛᴀʙᴀꜱᴇ:</b> MongoDB\n\n"
+        f"<i>This bot provides powerful auto-request approval, dynamic keyword filtering with overwrite protection, and 1-hour auto-edit features for Telegram Groups & Channels.</i>"
+    )
+    back_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text='🔙 ʙᴀᴄᴋ', callback_data='start_menu')]])
+    try: await call.message.edit_caption(caption=about_text, reply_markup=back_kb)
+    except: pass
+
+@dp.callback_query(F.data == "start_menu")
+async def cb_start(call: CallbackQuery):
+    me = await bot.get_me()
+    greeting = get_greeting()
+    user_name = call.from_user.first_name.upper() if call.from_user.first_name else "USER"
+    bot_name = me.first_name.upper() if me.first_name else "BOT"
+    
+    caption = (
+        f"🚩 <b>JAI SHRI RAM</b> 🚩\n\n"
+        f"<b>HEY {user_name}</b>, {greeting}\n\n"
+        f"🤖 <b>ɪ ᴀᴍ {bot_name}</b>, ᴛʜᴇ ᴍᴏꜱᴛ ᴘᴏᴡᴇʀꜰᴜʟ ᴀᴜᴛᴏ ꜰɪʟᴛᴇʀ ʙᴏᴛ ᴡɪᴛʜ ᴘʀᴇᴍɪᴜᴍ ꜰᴇᴀᴛᴜʀᴇꜱ."
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='🔰 ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ 🔰', url=f'https://t.me/{me.username}?startgroup=true')],
+        [InlineKeyboardButton(text='ʜᴇʟᴘ 📢', callback_data='help_menu'),
+         InlineKeyboardButton(text='ᴀʙᴏᴜᴛ 📖', callback_data='about_menu')],
+        [InlineKeyboardButton(text='➕ ᴀᴅᴅ ᴛᴏ ᴄʜᴀɴɴᴇʟ ➕', url=f'https://t.me/{me.username}?startchannel=start')]
+    ])
+    try: await call.message.edit_caption(caption=caption, reply_markup=kb)
+    except: pass
 
 @dp.message(Command("help"))
 async def cmd_help(msg: types.Message):
     if msg.chat.type != "private": return
     help_text = (
-        "📖 <b>How to Use This Bot:</b>\n\n"
-        "<b>1. Channel DMs (Welcome/Left):</b>\n"
+        "📖 <b>Full Command & Feature Guide:</b>\n\n"
+        "📢 <b>1. Channel DMs (Welcome/Goodbye):</b>\n"
         "• <code>/setwelcome</code> & <code>/setleft</code> to set msgs.\n"
         "• <code>/offwelcome</code> & <code>/offleft</code> to turn off.\n\n"
-        "<b>2. Group Filters:</b>\n"
+        "🗃️ <b>2. Group Filters:</b>\n"
         "• <code>/addfilter &lt;word&gt; &lt;reply_text&gt;</code>\n"
         "• <code>/delfilter &lt;word&gt;</code>\n"
         "• <code>/filters</code>"
@@ -240,7 +317,6 @@ async def on_chat_member_update(update: types.ChatMemberUpdated):
 async def filter_handler(msg: types.Message):
     if msg.text.startswith('/'): return
     
-    # Only group chats check
     if msg.chat.type != 'private':
         chat_data = await get_chat_data(str(msg.chat.id))
         for kw, reply in chat_data.get('filters', {}).items():
@@ -251,7 +327,6 @@ async def filter_handler(msg: types.Message):
                 
                 sent = await msg.reply(f"<b>{reply}</b>", link_preview_options=types.LinkPreviewOptions(is_disabled=True))
                 
-                # Cleanup Data (1 Hour edit)
                 new_cleanup = chat_data.get('cleanup', []) + [{
                     "chat_id": sent.chat.id, 
                     "message_id": sent.message_id, 
@@ -272,7 +347,7 @@ async def cleanup_task():
                         await bot.edit_message_text(
                             chat_id=item['chat_id'], 
                             message_id=item['message_id'],
-                            text="💖 Just send the title, and I'll get it for you instantly! 👇"
+                            text="💖 ᴊᴜꜱᴛ ꜱᴇɴᴅ ᴛʜᴇ ᴛɪᴛʟᴇ, ᴀɴᴅ ɪ'ʟʟ ɢᴇᴛ ɪᴛ ꜰᴏʀ ʏᴏᴜ ɪɴꜱᴛᴀɴᴛʟʏ! 👇"
                         )
                     except: pass
                 else: valid.append(item)
