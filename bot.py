@@ -54,7 +54,6 @@ async def is_admin(msg: types.Message) -> bool:
     except: return False
 
 def get_greeting():
-    # India ke time (IST) ke hisaab se Greeting dega
     ist_time = time.time() + (5.5 * 3600)
     hour = time.gmtime(ist_time).tm_hour
     if hour < 12: return "ɢᴏᴏᴅ ᴍᴏʀɴɪɴɢ 🌞"
@@ -73,29 +72,29 @@ async def cmd_start(msg: types.Message, state: FSMContext):
     user_name = msg.from_user.first_name.upper() if msg.from_user.first_name else "USER"
     bot_name = me.first_name.upper() if me.first_name else "BOT"
     
+    # 👇 PROBLEM 1 FIX: Pura font ab BOLD (<b>) mein hai
     caption = (
         f"🚩 <b>JAI SHRI RAM</b> 🚩\n\n"
-        f"<b>HEY {user_name}</b>, {greeting}\n\n"
-        f"🤖 <b>ɪ ᴀᴍ {bot_name}</b>, ᴛʜᴇ ᴍᴏꜱᴛ ᴘᴏᴡᴇʀꜰᴜʟ ᴀᴜᴛᴏ ꜰɪʟᴛᴇʀ ʙᴏᴛ ᴡɪᴛʜ ᴘʀᴇᴍɪᴜᴍ ꜰᴇᴀᴛᴜʀᴇꜱ."
+        f"<b>HEY {user_name}</b>, <b>{greeting}</b>\n\n"
+        f"🤖 <b>ɪ ᴀᴍ {bot_name}, ᴛʜᴇ ᴍᴏꜱᴛ ᴘᴏᴡᴇʀꜰᴜʟ ᴀᴜᴛᴏ ꜰɪʟᴛᴇʀ ʙᴏᴛ ᴡɪᴛʜ ᴘʀᴇᴍɪᴜᴍ ꜰᴇᴀᴛᴜʀᴇꜱ.</b>"
     )
     
+    # 👇 PROBLEM 2 FIX: Group aur Channel dono ke buttons aapke screenshot layout ke hisaab se
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text='🔰 ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ 🔰', url=f'https://t.me/{me.username}?startgroup=true')],
         [InlineKeyboardButton(text='ʜᴇʟᴘ 📢', callback_data='help_menu'),
          InlineKeyboardButton(text='ᴀʙᴏᴜᴛ 📖', callback_data='about_menu')],
+        [InlineKeyboardButton(text='ᴛᴏᴘ ꜱᴇᴀʀᴄʜɪɴɢ ⭐', callback_data='top_search'),
+         InlineKeyboardButton(text='ᴜᴘɢʀᴀᴅᴇ 🎟️', callback_data='upgrade_menu')],
         [InlineKeyboardButton(text='➕ ᴀᴅᴅ ᴛᴏ ᴄʜᴀɴɴᴇʟ ➕', url=f'https://t.me/{me.username}?startchannel=start')]
     ])
     
-    # 👇 YAHAN AAP APNI PHOTO KA LINK DAAL SAKTE HAIN
     IMAGE_URL = "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=800"
     
-    try:
-        await msg.answer_photo(photo=IMAGE_URL, caption=caption, reply_markup=kb)
-    except:
-        # Agar image link load nahi hua, toh simple text bhej dega (Anti-crash)
-        await msg.answer(caption, reply_markup=kb)
+    try: await msg.answer_photo(photo=IMAGE_URL, caption=caption, reply_markup=kb)
+    except: await msg.answer(caption, reply_markup=kb)
 
-# --- CALLBACK MENUS (FOR HELP, ABOUT & BACK BUTTONS) ---
+# --- CALLBACK MENUS (HELP, ABOUT, EXTRA BUTTONS) ---
 @dp.callback_query(F.data == "help_menu")
 async def cb_help(call: CallbackQuery):
     help_text = (
@@ -132,6 +131,14 @@ async def cb_about(call: CallbackQuery):
     try: await call.message.edit_caption(caption=about_text, reply_markup=back_kb)
     except: pass
 
+@dp.callback_query(F.data == "top_search")
+async def cb_top_search(call: CallbackQuery):
+    await call.answer("⭐ Top Searching feature coming soon!", show_alert=True)
+
+@dp.callback_query(F.data == "upgrade_menu")
+async def cb_upgrade(call: CallbackQuery):
+    await call.answer("🎟️ Upgrade feature coming soon!", show_alert=True)
+
 @dp.callback_query(F.data == "start_menu")
 async def cb_start(call: CallbackQuery):
     me = await bot.get_me()
@@ -141,13 +148,15 @@ async def cb_start(call: CallbackQuery):
     
     caption = (
         f"🚩 <b>JAI SHRI RAM</b> 🚩\n\n"
-        f"<b>HEY {user_name}</b>, {greeting}\n\n"
-        f"🤖 <b>ɪ ᴀᴍ {bot_name}</b>, ᴛʜᴇ ᴍᴏꜱᴛ ᴘᴏᴡᴇʀꜰᴜʟ ᴀᴜᴛᴏ ꜰɪʟᴛᴇʀ ʙᴏᴛ ᴡɪᴛʜ ᴘʀᴇᴍɪᴜᴍ ꜰᴇᴀᴛᴜʀᴇꜱ."
+        f"<b>HEY {user_name}</b>, <b>{greeting}</b>\n\n"
+        f"🤖 <b>ɪ ᴀᴍ {bot_name}, ᴛʜᴇ ᴍᴏꜱᴛ ᴘᴏᴡᴇʀꜰᴜʟ ᴀᴜᴛᴏ ꜰɪʟᴛᴇʀ ʙᴏᴛ ᴡɪᴛʜ ᴘʀᴇᴍɪᴜᴍ ꜰᴇᴀᴛᴜʀᴇꜱ.</b>"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text='🔰 ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ 🔰', url=f'https://t.me/{me.username}?startgroup=true')],
         [InlineKeyboardButton(text='ʜᴇʟᴘ 📢', callback_data='help_menu'),
          InlineKeyboardButton(text='ᴀʙᴏᴜᴛ 📖', callback_data='about_menu')],
+        [InlineKeyboardButton(text='ᴛᴏᴘ ꜱᴇᴀʀᴄʜɪɴɢ ⭐', callback_data='top_search'),
+         InlineKeyboardButton(text='ᴜᴘɢʀᴀᴅᴇ 🎟️', callback_data='upgrade_menu')],
         [InlineKeyboardButton(text='➕ ᴀᴅᴅ ᴛᴏ ᴄʜᴀɴɴᴇʟ ➕', url=f'https://t.me/{me.username}?startchannel=start')]
     ])
     try: await call.message.edit_caption(caption=caption, reply_markup=kb)
@@ -344,10 +353,12 @@ async def cleanup_task():
             for item in chat.get('cleanup', []):
                 if time.time() >= item['delete_at']:
                     try:
+                        # 👇 PROBLEM 3 FIX: Yahan ka text ab poori tarah BOLD (<b>) aur premium font me hai
                         await bot.edit_message_text(
                             chat_id=item['chat_id'], 
                             message_id=item['message_id'],
-                            text="💖 ᴊᴜꜱᴛ ꜱᴇɴᴅ ᴛʜᴇ ᴛɪᴛʟᴇ, ᴀɴᴅ ɪ'ʟʟ ɢᴇᴛ ɪᴛ ꜰᴏʀ ʏᴏᴜ ɪɴꜱᴛᴀɴᴛʟʏ! 👇"
+                            text="<b>💖 ᴊᴜꜱᴛ ꜱᴇɴᴅ ᴛʜᴇ ᴛɪᴛʟᴇ, ᴀɴᴅ ɪ'ʟʟ ɢᴇᴛ ɪᴛ ꜰᴏʀ ʏᴏᴜ ɪɴꜱᴛᴀɴᴛʟʏ! 👇</b>",
+                            parse_mode=ParseMode.HTML
                         )
                     except: pass
                 else: valid.append(item)
