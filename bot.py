@@ -14,7 +14,6 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, CallbackQu
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-# 👇 Google ki bilkul nayi library import
 from google import genai 
 
 # --- LOGGING & CONFIG ---
@@ -31,7 +30,6 @@ if not BOT_TOKEN or not MONGO_URI:
 
 # --- NEW GEMINI AI SETUP ---
 if GEMINI_API_KEY:
-    # Nayi library mein Client setup kiya jata hai
     ai_client = genai.Client(api_key=GEMINI_API_KEY)
 else:
     ai_client = None
@@ -264,7 +262,7 @@ async def filter_handler(msg: types.Message):
                 
                 sent = await msg.reply(f"<b>{reply}</b>", link_preview_options=types.LinkPreviewOptions(is_disabled=True))
                 
-                # Filter Cleanup Data (Type: filter, 1 Hour)
+                # Filter Cleanup Data
                 new_cleanup = chat_data.get('cleanup', []) + [{
                     "chat_id": sent.chat.id, 
                     "message_id": sent.message_id, 
@@ -274,7 +272,7 @@ async def filter_handler(msg: types.Message):
                 await update_chat_data(str(msg.chat.id), {"cleanup": new_cleanup})
                 return 
 
-    # 2. DIRECT AI CHATBOT LOGIC (New SDK Code)
+    # 2. DIRECT AI CHATBOT LOGIC (Bug Fixed)
     if not ai_client: return
     prompt = msg.text.strip()
     if not prompt: return
@@ -287,11 +285,15 @@ async def filter_handler(msg: types.Message):
             "Keep answers engaging and strictly reply in Hinglish/Hindi language as requested by Indian users."
         )
         
-        # 👇 Naya Async Generate Content Method
-        response = await ai_client.aio.models.generate_content(
-            model='gemini-1.5-flash',
-            contents=f"{system_instruction}\n\nUser Question: {prompt}"
-        )
+        # 👇 Yahan error tha! Ab hum isko ek alag safe thread me run kar rahe hain
+        def fetch_ai_reply():
+            return ai_client.models.generate_content(
+                model='gemini-1.5-flash',
+                contents=f"{system_instruction}\n\nUser Question: {prompt}"
+            )
+        
+        # Asyncio to_thread library conflict ko bypass kar dega
+        response = await asyncio.to_thread(fetch_ai_reply)
         
         try:
             sent_ai = await msg.reply(response.text, parse_mode=ParseMode.MARKDOWN)
@@ -300,7 +302,6 @@ async def filter_handler(msg: types.Message):
             
         if sent_ai:
             ai_chat_data = await get_chat_data(str(msg.chat.id))
-            # AI Cleanup Data (Type: ai, 5 Minutes)
             new_ai_cleanup = ai_chat_data.get('cleanup', []) + [{
                 "chat_id": sent_ai.chat.id,
                 "message_id": sent_ai.message_id,
@@ -335,7 +336,7 @@ async def cleanup_task():
 
 # --- RENDER WEB SERVER (ANTI-CRASH) ---
 async def handle_ping(request): 
-    return web.Response(text="Bot is running smoothly on Render with New Google GenAI SDK!")
+    return web.Response(text="Bot is running smoothly on Render with Sync Threading!")
 
 async def start_dummy_server():
     app = web.Application()
