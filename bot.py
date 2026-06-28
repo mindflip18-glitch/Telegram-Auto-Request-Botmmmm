@@ -23,9 +23,9 @@ API_HASH = os.getenv('API_HASH', '')
 PORT = int(os.environ.get("PORT", 10000))
 
 # ⚠️ YAHAN APNE ALAG-ALAG LINKS AUR BOT USERNAME DAALEIN
-FILE_CAPTION_LINK = "https://t.me/+rG8nfdrvV2FlN2M1"       # Jo file ke naam ke andar link chahiye
-UPDATE_CHANNEL_LINK = "https://t.me/K_CDRAMAUPDATES"   # Jo niche Button ke andar link chahiye
-BOT_USERNAME = "KDL143BOT"                              # Bot ka username bina @ ke
+FILE_CAPTION_LINK = "https://t.me/+rG8nfdrvV2FlN2M1"       
+UPDATE_CHANNEL_LINK = "https://t.me/K_CDRAMAUPDATES"   
+BOT_USERNAME = "KDL143BOT"                              
 
 # Initialize Client
 bot = Client("filter_batch_bot", api_id=int(API_ID), api_hash=API_HASH, bot_token=BOT_TOKEN, parse_mode=enums.ParseMode.HTML)
@@ -196,12 +196,12 @@ async def cmd_start(client: Client, msg: Message):
                 [InlineKeyboardButton("📌 JOIN UPDATE CHANNEL 📌", url=UPDATE_CHANNEL_LINK)]
             ])
             
-                        for m_id in range(first_id, last_id + 1):
+            for m_id in range(first_id, last_id + 1):
                 try:
                     tg_msg = await client.get_messages(chat_id, m_id)
                     if tg_msg.empty: continue
                     
-                    # 👇 YAHAN CHECK KAREGA KI MESSAGE VIDEO/FILE HAI YA NAHI
+                    # 👇 SIRF MOVIE/VIDEO/AUDIO PAR HI LINK LAGEGA
                     if tg_msg.document or tg_msg.video or tg_msg.audio:
                         file_name = "🎬 Movie/Series File"
                         if tg_msg.document and tg_msg.document.file_name: 
@@ -225,18 +225,19 @@ async def cmd_start(client: Client, msg: Message):
                             reply_markup=vip_button
                         )
                     else:
-                        # 👇 AGAR STICKER YA TEXT HAI TO BINA BUTTON KE NORMAL BHEJEGA
+                        # 👇 STICKER/TEXT WAGERAH BINA LINK/BUTTON KE JAYEGA
                         await client.copy_message(
                             chat_id=msg.chat.id,
                             from_chat_id=chat_id,
                             message_id=m_id
                         )
-                        
+                    
                     await asyncio.sleep(0.5)
                 except FloodWait as e:
                     await asyncio.sleep(e.value)
                 except Exception:
                     pass
+            return await wait_msg.delete()
             
     # DEFAULT START RESPONSE
     me = await client.get_me()
@@ -288,9 +289,9 @@ async def cb_handlers(client: Client, call: CallbackQuery):
         me = await client.get_me()
         caption = f"🚩 <b>JAI SHRI RAM</b> 🚩\n\n<b>HEY {call.from_user.first_name.upper()}</b>, <b>{get_greeting()}</b>\n\n🤖 <b>ɪ ᴀᴍ {me.first_name.upper()}, ᴛʜᴇ ᴍᴏꜱᴛ ᴘᴏᴡᴇʀꜰᴜʟ ᴀᴜᴛᴏ ꜰɪʟᴛᴇʀ ʙᴏᴛ ᴡɪᴛʜ ᴘʀᴇᴍɪᴜᴍ ꜰᴇᴀᴛᴜʀᴇꜱ.</b>"
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton('🔰 ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏoup 🔰', url=f'https://t.me/{me.username}?startgroup=true')],
+            [InlineKeyboardButton('🔰 ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ 🔰', url=f'https://t.me/{me.username}?startgroup=true')],
             [InlineKeyboardButton('ʜᴇʟᴘ 📢', callback_data='help_menu'), InlineKeyboardButton('ᴀʙᴏᴜᴛ 📖', callback_data='about_menu')],
-            [InlineKeyboardButton('ᴛᴏᴘ ꜱᴇᴀʀᴄʜɪɴɢ ⭐', callback_data='top_search'), InlineKeyboardButton('... 🎟️', callback_data='upgrade_menu')],
+            [InlineKeyboardButton('ᴛᴏᴘ ꜱᴇᴀʀᴄʜɪɴɢ ⭐', callback_data='top_search'), InlineKeyboardButton('ᴜᴘɢʀᴀᴅᴇ 🎟️', callback_data='upgrade_menu')],
             [InlineKeyboardButton('➕ ᴀᴅᴅ ᴛᴏ ᴄʜᴀɴɴᴇʟ ➕', url=f'https://t.me/{me.username}?startchannel=start')]
         ])
         try: await call.message.edit_caption(caption=caption, reply_markup=kb)
