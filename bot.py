@@ -204,8 +204,8 @@ async def cmd_start(client: Client, msg: Message):
                     elif tg_msg.audio: file_name = tg_msg.audio.file_name
                     
                     vip_caption = (
-                        f"<b><a href='{CHANNEL_LINK}'>{file_name}</a></b>\n\n"
-                        f"<b>⚜️ Powered By : @ASKOREANDRAMA</b>"
+    f"<b><a href='{CAPTION_LINK}'>{file_name}</a></b>\n\n"
+    f"<b>⚜️ Powered By : @ASKOREANDRAMA</b>"
                     )
                     
                     await client.copy_message(
