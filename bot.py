@@ -23,8 +23,8 @@ API_HASH = os.getenv('API_HASH', '')
 PORT = int(os.environ.get("PORT", 10000))
 
 # ⚠️ YAHAN APNA MAIN CHANNEL LINK AUR BOT USERNAME DAALEIN
-CHANNEL_LINK = "https://t.me/YOUR_CHANNEL_USERNAME"
-BOT_USERNAME = "YOUR_BOT_USERNAME" 
+CHANNEL_LINK = "https://t.me/+rG8nfdrvV2FlN2M1"
+BOT_USERNAME = "KDL143BOT" 
 
 # Initialize Client
 bot = Client("filter_batch_bot", api_id=int(API_ID), api_hash=API_HASH, bot_token=BOT_TOKEN, parse_mode=enums.ParseMode.HTML)
