@@ -390,20 +390,26 @@ async def cmd_help(client: Client, msg: Message):
 @bot.on_message(filters.command("addfilter") & filters.group)
 async def cmd_addfilter(client: Client, msg: Message):
     if not await is_admin(client, msg): return
-    args = msg.text.split(maxsplit=2)
-    if len(args) < 3: return await msg.reply_text("❌ Format: /addfilter keyword reply")
     
-    keyword, reply_text = args[1].lower(), args[2]
+    # Naya system: Keyword aur Reply ko alag karne ke liye | (pipe) ka use
+    if "|" not in msg.text:
+        return await msg.reply_text("❌ <b>Sahi Format:</b> <code>/addfilter keyword | reply link</code>\n\n<b>Example:</b>\n<code>/addfilter my demon k drama | https://t.me/ASKORENDRAMA/123</code>")
+    
+    text = msg.text.replace("/addfilter", "", 1).strip()
+    keyword, reply_text = text.split("|", 1)
+    keyword = keyword.strip().lower()
+    reply_text = reply_text.strip()
+    
     chat_id = str(msg.chat.id)
     chat_data = await get_chat_data(chat_id)
     
     if keyword in chat_data.get('filters', {}):
         await settings_col.update_one({"chat_id": chat_id}, {"$set": {"pending_filter": {"keyword": keyword, "reply_text": reply_text}}}, upsert=True)
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Yes, Update", callback_data="filter_update_yes"), InlineKeyboardButton("❌ No, Cancel", callback_data="filter_update_no")]])
-        await msg.reply_text(f"⚠️ <b>Wait!</b> '<code>{keyword}</code>' ka filter pehle se mojood hai. Overwrite?", reply_markup=kb)
+        await msg.reply_text(f"⚠️ <b>Wait!</b> '<code>{keyword}</code>' ka filter pehle se mojood hai. Overwrite karein?", reply_markup=kb)
     else:
         await settings_col.update_one({"chat_id": chat_id}, {"$set": {f"filters.{keyword}": reply_text}}, upsert=True)
-        await msg.reply_text(f"✅ Naya Filter <b>{keyword}</b> added!")
+        await msg.reply_text(f"✅ Naya Filter <b>{keyword}</b> successfully add ho gaya!")
 
 @bot.on_message(filters.command("delfilter") & filters.group)
 async def cmd_delfilter(client: Client, msg: Message):
