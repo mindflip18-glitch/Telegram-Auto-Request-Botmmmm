@@ -303,7 +303,7 @@ async def cmd_start(client: Client, msg: Message):
                         
                         vip_caption = (
                             f"<b><a href='{FILE_CAPTION_LINK}'>{file_name}</a></b>\n\n"
-                            f"<b>⚜️ Powered By : @ASKORENDRAMA</b>"
+                            f"<b>⚜️ Powered By : @GT_DRAMA</b>"
                         )
                         
                         sent = await client.copy_message(
