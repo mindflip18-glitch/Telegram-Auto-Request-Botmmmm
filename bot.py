@@ -43,7 +43,9 @@ db = client.bot_database
 settings_col = db.chat_settings
 
 # --- BATCH SYSTEM HELPERS ---
-batch_link = f"https://gtkoreandrama.kdlbot.workers.dev?start=batch_{token}"
+LINK_REGEX = re.compile(r'https://t\.me/(?:c/)?(.*)/(\d+)')
+user_states = {}
+
 def encode_id(chat_id, first_id, last_id):
     raw = f"{chat_id}:{first_id}:{last_id}"
     return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
@@ -227,7 +229,11 @@ async def private_state_manager(client: Client, msg: Message):
         if first_id > last_id: first_id, last_id = last_id, first_id
 
         token = encode_id(chat_id, first_id, last_id)
-        batch_link = f"https://t.me/{BOT_USERNAME}?start=batch_{token}"
+        
+        # 👇 YAHAN MAINE AAPKA NAYA WORKER LINK ADD KAR DIYA HAI 👇
+        batch_link = f"https://gtkoreandrama.kdlbot.workers.dev?start=batch_{token}"
+        # 👆 AB BOT YAHI LINK BANAYEGA 👆
+        
         await msg.reply_text(f"✅ <b>Here is your Batch Link:</b>\n\n<code>{batch_link}</code>")
         user_states.pop(user_id, None)
 
