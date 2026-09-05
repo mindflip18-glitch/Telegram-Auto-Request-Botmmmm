@@ -43,9 +43,7 @@ db = client.bot_database
 settings_col = db.chat_settings
 
 # --- BATCH SYSTEM HELPERS ---
-LINK_REGEX = re.compile(r'https://t\.me/(?:c/)?(.*)/(\d+)')
-user_states = {}
-
+batch_link = f"https://gtkoreandrama.kdlbot.workers.dev?start=batch_{token}"
 def encode_id(chat_id, first_id, last_id):
     raw = f"{chat_id}:{first_id}:{last_id}"
     return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
@@ -303,7 +301,7 @@ async def cmd_start(client: Client, msg: Message):
                         
                         vip_caption = (
                             f"<b><a href='{FILE_CAPTION_LINK}'>{file_name}</a></b>\n\n"
-                            f"<b>⚜️ Powered By : @GT_DRAMA</b>"
+                            f"<b>⚜️ Powered By : @GTKOREANDRAMA</b>"
                         )
                         
                         sent = await client.copy_message(
