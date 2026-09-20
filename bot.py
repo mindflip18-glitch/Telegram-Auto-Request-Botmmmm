@@ -23,6 +23,9 @@ API_ID = os.getenv('API_ID', '0')
 API_HASH = os.getenv('API_HASH', '')    
 PORT = int(os.environ.get("PORT", 10000))
 
+# Destination Group ID jahan link send hoga
+BYPASS_DEST_GROUP = os.getenv('BYPASS_DEST_GROUP', '-1003746599873') 
+
 # ⚠️ LINKS AUR BOT USERNAME
 FILE_CAPTION_LINK = "https://t.me/+rG8nfdrvV2FlN2M1"       
 UPDATE_CHANNEL_LINK = "https://t.me/+rG8nfdrvV2FlN2M1"   
@@ -81,7 +84,7 @@ def get_greeting():
     elif hour < 20: return "ɢᴏᴏᴅ ᴇᴠᴇɴɪɴɢ 🌥️"
     else: return "ɢᴏᴏᴅ ɴɪɢʜᴛ 🌙"
 
-# --- SMART FSUB MISSING CHANNELS FINDER (FIXED CACHE ISSUE) ---
+# --- SMART FSUB MISSING CHANNELS FINDER ---
 async def get_missing_channels(client, user_id):
     missing = []
     channels = [
@@ -108,8 +111,6 @@ async def get_missing_channels(client, user_id):
 @bot.on_callback_query(filters.regex(r"^fsub_(.*)"))
 async def fsub_callback(client: Client, call: CallbackQuery):
     token = call.matches[0].group(1)
-    
-    # Naye function se check karwaya
     missing_channels = await get_missing_channels(client, call.from_user.id)
     if missing_channels:
         return await call.answer("❌ Please join all required channels first!", show_alert=True)
@@ -230,9 +231,7 @@ async def private_state_manager(client: Client, msg: Message):
 
         token = encode_id(chat_id, first_id, last_id)
         
-        # 👇 YAHAN MAINE AAPKA NAYA WORKER LINK ADD KAR DIYA HAI 👇
         batch_link = f"https://gtkoreandrama.kdlbot.workers.dev?start=batch_{token}"
-        # 👆 AB BOT YAHI LINK BANAYEGA 👆
         
         await msg.reply_text(f"✅ <b>Here is your Batch Link:</b>\n\n<code>{batch_link}</code>")
         user_states.pop(user_id, None)
@@ -257,22 +256,18 @@ async def cmd_start(client: Client, msg: Message):
     if len(msg.command) > 1 and msg.command[1].startswith("batch_"):
         token = msg.command[1].replace("batch_", "")
         
-                # 👇 NAYA VIP DYNAMIC FSUB CHECK 👇
         missing_channels = await get_missing_channels(client, msg.from_user.id)
         if missing_channels:
             user_link = f"<a href='tg://user?id={msg.from_user.id}'>{msg.from_user.first_name}</a>"
             fsub_text = f"<i>Hey {user_link}\n\nPlease Join My Update Channel(s) To Use Me!</i>"
             
             fsub_buttons = []
-            # Jo channel missing hai, sirf usi ka button banega
             for ch in missing_channels:
                 fsub_buttons.append([InlineKeyboardButton(f"Join {ch['name']}", url=ch["link"])])
             
-            # Last mein Try Again ka button jod diya
             fsub_buttons.append([InlineKeyboardButton("♻️ Try Again", callback_data=f"fsub_{token}")])
             
             return await msg.reply_text(fsub_text, reply_markup=InlineKeyboardMarkup(fsub_buttons))
-        # 👆 DYNAMIC FSUB CHECK KHATAM 👆
         
         data = decode_id(token)
         
@@ -420,7 +415,7 @@ async def cb_handlers(client: Client, call: CallbackQuery):
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton('🔰 ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ 🔰', url=f'https://t.me/{me.username}?startgroup=true')],
             [InlineKeyboardButton('ʜᴇʟᴘ 📢', callback_data='help_menu'), InlineKeyboardButton('ᴀʙᴏᴜᴛ 📖', callback_data='about_menu')],
-            [InlineKeyboardButton('ᴛᴏᴘ ꜱᴇᴀʀｃʜɪɴɢ ⭐', callback_data='top_search'), InlineKeyboardButton('... 🎟️', callback_data='upgrade_menu')],
+            [InlineKeyboardButton('ᴛᴏᴘ ꜱᴇᴀʀᴄʜɪɴɢ ⭐', callback_data='top_search'), InlineKeyboardButton('... 🎟️', callback_data='upgrade_menu')],
             [InlineKeyboardButton('➕ ᴀᴅᴅ ᴛᴏ ᴄʜᴀɴɴᴇʟ ➕', url=f'https://t.me/{me.username}?startchannel=start')]
         ])
         try: await call.message.edit_caption(caption=caption, reply_markup=kb)
@@ -557,6 +552,37 @@ async def group_filter_handler(client: Client, msg: Message):
             new_cleanup = chat_data.get('cleanup', []) + [{"chat_id": sent.chat.id, "message_id": sent.id, "delete_at": time.time() + 86400}]
             await update_chat_data(chat_id, {"cleanup": new_cleanup})
             return 
+
+# ==========================================
+# 6. BYPASS LINK EXTRACTOR (NEW FEATURE)
+# ==========================================
+# filters.chat(-1003994123332) ensure karega ki bot sirf Bypass channel ko hi sune
+@bot.on_message(filters.chat(-1003994123332) & filters.text & filters.regex(r"Bypassed Link:", flags=re.IGNORECASE), group=1)
+async def bypass_link_extractor(client: Client, msg: Message):
+    try:
+        # ✅ ya bina ✅ ke flexible extraction + full query parameter capture
+        match = re.search(r"Bypassed Link:\s*(?:✅)?\s*(https?://\S+)", msg.text, re.IGNORECASE)
+        
+        if match:
+            extracted_url = match.group(1).strip()
+            
+            if BYPASS_DEST_GROUP:
+                try:
+                    dest_chat_id = int(BYPASS_DEST_GROUP)
+                    # Sirf URL forward kiya jayega destination me
+                    await client.send_message(
+                        chat_id=dest_chat_id, 
+                        text=extracted_url,
+                        disable_web_page_preview=True
+                    )
+                except ValueError:
+                    logging.error("BYPASS_DEST_GROUP config sahi format mein nahi hai (numbers hone chahiye).")
+                except Exception as send_err:
+                    logging.error(f"Destination group me bypass link bhejte waqt error: {send_err}")
+            else:
+                logging.warning("BYPASS_DEST_GROUP set nahi hai. Link mila par forward nahi kiya ja saka.")
+    except Exception as e:
+        logging.error(f"Bypass extractor module me unexpected error: {e}")
 
 # --- BACKGROUND DYNAMIC CLEANUP TASK (EDIT FILTERS / DELETE BATCHES) ---
 async def cleanup_task():
