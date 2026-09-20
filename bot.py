@@ -23,7 +23,7 @@ API_ID = os.getenv('API_ID', '0')
 API_HASH = os.getenv('API_HASH', '')    
 PORT = int(os.environ.get("PORT", 10000))
 
-# Destination Group ID jahan link send hoga
+# Destination Group ID jahan link send hoga (Group 2)
 BYPASS_DEST_GROUP = os.getenv('BYPASS_DEST_GROUP', '-1003746599873') 
 
 # ⚠️ LINKS AUR BOT USERNAME
@@ -31,11 +31,11 @@ FILE_CAPTION_LINK = "https://t.me/+rG8nfdrvV2FlN2M1"
 UPDATE_CHANNEL_LINK = "https://t.me/+rG8nfdrvV2FlN2M1"   
 BOT_USERNAME = "KDL143bot" 
 
-# ⚠️ FORCE SUB CHANNELS (Yahan apne channels daalein)
-FSUB_CHANNEL_1 = -1002800172814  # Pehle Channel ki ID yahan daalein (Minus lagana zaroori hai)
-FSUB_CHANNEL_2 = -1003684601193  # Dusre Channel ki ID yahan daalein
-FSUB_LINK_1 = "https://t.me/+HIq_6zg3fRE2MDE1"   # Pehle Channel ka invite link
-FSUB_LINK_2 = "https://t.me/K_CDRAMAUPDATES"   # Dusre Channel ka invite link                             
+# ⚠️ FORCE SUB CHANNELS
+FSUB_CHANNEL_1 = -1002800172814  
+FSUB_CHANNEL_2 = -1003684601193  
+FSUB_LINK_1 = "https://t.me/+HIq_6zg3fRE2MDE1"   
+FSUB_LINK_2 = "https://t.me/K_CDRAMAUPDATES"                             
 
 # Initialize Client
 bot = Client("filter_batch_bot", api_id=int(API_ID), api_hash=API_HASH, bot_token=BOT_TOKEN, parse_mode=enums.ParseMode.HTML)
@@ -554,35 +554,44 @@ async def group_filter_handler(client: Client, msg: Message):
             return 
 
 # ==========================================
-# 6. BYPASS LINK EXTRACTOR (NEW FEATURE)
+# 6. BYPASS LINK EXTRACTOR (NEW FEATURE - MULTILINE FIX)
 # ==========================================
-# filters.chat(-1003994123332) ensure karega ki bot sirf Bypass channel ko hi sune
-@bot.on_message(filters.chat(-1003994123332) & filters.text & filters.regex(r"Bypassed Link:", flags=re.IGNORECASE), group=1)
+# filters.chat(-1003994123332) ensure karega ki bot sirf Source Group ko hi sune
+@bot.on_message(filters.chat(-1003994123332), group=1)
 async def bypass_link_extractor(client: Client, msg: Message):
     try:
-        # ✅ ya bina ✅ ke flexible extraction + full query parameter capture
-        match = re.search(r"Bypassed Link:\s*(?:✅)?\s*(https?://\S+)", msg.text, re.IGNORECASE)
+        # Message chahe normal text ho ya media caption, dono read karega
+        content = msg.text or msg.caption
+        
+        if not content:
+            return 
+        
+        # re.DOTALL add kiya hai taaki next line aur symbols (❞, ✅) cross karke exact link nikal sake
+        match = re.search(r"Bypassed Link:.*?(https?://\S+)", content, re.IGNORECASE | re.DOTALL)
         
         if match:
             extracted_url = match.group(1).strip()
+            logging.info(f"🔗 SUCCESS: Bypass Link mil gaya! -> {extracted_url}")
             
             if BYPASS_DEST_GROUP:
                 try:
                     dest_chat_id = int(BYPASS_DEST_GROUP)
-                    # Sirf URL forward kiya jayega destination me
+                    # Sirf URL destination group me bhejega
                     await client.send_message(
                         chat_id=dest_chat_id, 
                         text=extracted_url,
                         disable_web_page_preview=True
                     )
+                    logging.info(f"✅ Link successfully forwarded to destination group.")
                 except ValueError:
-                    logging.error("BYPASS_DEST_GROUP config sahi format mein nahi hai (numbers hone chahiye).")
+                    logging.error("❌ ERROR: BYPASS_DEST_GROUP ID sahi nahi hai.")
                 except Exception as send_err:
-                    logging.error(f"Destination group me bypass link bhejte waqt error: {send_err}")
+                    logging.error(f"❌ ERROR: Destination group me bhejte waqt error aayi: {send_err}")
             else:
-                logging.warning("BYPASS_DEST_GROUP set nahi hai. Link mila par forward nahi kiya ja saka.")
+                logging.warning("⚠️ WARNING: BYPASS_DEST_GROUP ID set nahi hai.")
+                
     except Exception as e:
-        logging.error(f"Bypass extractor module me unexpected error: {e}")
+        logging.error(f"❌ Bypass extractor module me unexpected error: {e}")
 
 # --- BACKGROUND DYNAMIC CLEANUP TASK (EDIT FILTERS / DELETE BATCHES) ---
 async def cleanup_task():
