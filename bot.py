@@ -45,9 +45,10 @@ client = AsyncIOMotorClient(MONGO_URI)
 db = client.bot_database
 settings_col = db.chat_settings
 
-# --- BATCH SYSTEM HELPERS ---
+# --- STATE MANAGERS & MEMORY ---
 LINK_REGEX = re.compile(r'https://t\.me/(?:c/)?(.*)/(\d+)')
 user_states = {}
+user_links = {} # TeraBox Links Memory
 
 def encode_id(chat_id, first_id, last_id):
     raw = f"{chat_id}:{first_id}:{last_id}"
@@ -60,6 +61,71 @@ def decode_id(token):
         raw = base64.urlsafe_b64decode(token.encode()).decode()
         return raw.split(":")
     except: return None
+
+# ==========================================
+# TERABOX HELPER FUNCTIONS (Merged from Bot 1)
+# ==========================================
+async def safe_reply(message, text, parse_mode=None, **kwargs):
+    try:
+        await message.reply_text(text, parse_mode=parse_mode, **kwargs)
+    except FloodWait as e:
+        print(f"Spam Limit Hit! Sleeping for {e.value} seconds...")
+        await asyncio.sleep(e.value + 2)
+        await message.reply_text(text, parse_mode=parse_mode, **kwargs)
+    except Exception as e:
+        await message.reply_text(f"❌ Post banane me error aaya: {e}")
+
+async def fetch_terabox_title(url):
+    try:
+        async with aiohttp.ClientSession() as session:
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+            async with session.get(url, headers=headers, timeout=10) as response:
+                html = await response.text()
+                match = re.search(r'<meta property="og:title" content="([^"]+)"', html, re.IGNORECASE)
+                if match:
+                    return match.group(1)
+                match2 = re.search(r'<title>(.*?)</title>', html, re.IGNORECASE)
+                if match2:
+                    return match2.group(1)
+    except Exception as e:
+        print(f"Scraping Error: {e}")
+    return ""
+
+def extract_info(filename):
+    title = "Unknown Drama"
+    year = "2024"
+    
+    clean_text = re.sub(r'(https?://[^\s]+)', '', filename, flags=re.IGNORECASE)
+    clean_text = re.sub(r'[a-zA-Z0-9.-]+\.com', '', clean_text, flags=re.IGNORECASE)
+    clean_text = re.sub(r'(Shared via TeraBox.*|TeraBox.*)', '', clean_text, flags=re.IGNORECASE|re.DOTALL)
+    clean_text = clean_text.strip()
+    
+    year_match = re.search(r'\b((?:19|20)\d{2})\b', clean_text)
+    if year_match:
+        year = year_match.group(1)
+        
+    found_langs = []
+    for lang in ['Hindi', 'Korean', 'English', 'Chinese', 'Japanese', 'Tamil', 'Telugu', 'Malayalam']:
+        if re.search(lang, clean_text, re.IGNORECASE):
+            found_langs.append(lang.upper())
+            
+    if found_langs:
+        main_lang = f"[{found_langs[0]}]"
+        audio_tags = " + ".join([f"#{l}" for l in found_langs])
+    else:
+        main_lang = ""
+        audio_tags = "#UNKNOWN"
+
+    title_match = re.search(r'(.*?)(?:_?S\d+EP|_?EP| S\d+EP| EP|_?(?:19|20)\d{2})', clean_text, re.IGNORECASE)
+    if title_match:
+        raw_title = title_match.group(1)
+        raw_title = re.sub(r'^@[A-Za-z0-9]+_', '', raw_title.strip()) 
+        raw_title = raw_title.replace('_', ' ').replace('.', ' ').strip()
+        
+        if len(raw_title) > 2:
+            title = raw_title.title()
+            
+    return title, year, main_lang, audio_tags
 
 # --- HELPER FUNCTIONS ---
 async def get_chat_data(chat_id: str):
@@ -161,7 +227,7 @@ async def cmd_set_time(client: Client, msg: Message):
 # ==========================================
 # 2. STATE MANAGER FOR PRIVATE CHAT
 # ==========================================
-@bot.on_message(filters.private & ~filters.command(["start", "batch", "help", "cancel", "setwelcome", "setleft", "offwelcome", "offleft", "settime"]))
+@bot.on_message(filters.private & ~filters.command(["start", "batch", "help", "cancel", "setwelcome", "setleft", "offwelcome", "offleft", "settime", "set", "post"]))
 async def private_state_manager(client: Client, msg: Message):
     user_id = msg.from_user.id
     state_data = user_states.get(user_id)
@@ -375,7 +441,7 @@ async def cmd_start(client: Client, msg: Message):
         f"🤖 <b>ɪ ᴀᴍ {bot_name}, ᴛʜᴇ ᴍᴏꜱᴛ ᴘᴏᴡᴇʀꜰᴜʟ ᴀᴜᴛᴏ ꜰɪʟᴛᴇʀ ʙᴏᴛ ᴡɪᴛʜ ᴘʀᴇᴍɪᴜᴍ ꜰᴇᴀᴛᴜʀᴇꜱ.</b>"
     )
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton('🔰 ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜᴘ 🔰', url=f'https://t.me/{me.username}?startgroup=true')],
+        [InlineKeyboardButton('🔰 ᴀᴅᴅ ᴍᴇ ᴛᴏ ʏᴏᴜʀ ɢʀᴏᴜpun 🔰', url=f'https://t.me/{me.username}?startgroup=true')],
         [InlineKeyboardButton('ʜᴇʟᴘ 📢', callback_data='help_menu'), InlineKeyboardButton('ᴀʙᴏᴜᴛ 📖', callback_data='about_menu')],
         [InlineKeyboardButton('ᴛᴏᴘ ꜱᴇᴀʀᴄʜɪɴɢ ⭐', callback_data='top_search'), InlineKeyboardButton('ᴜᴘɢʀᴀᴅᴇ 🎟️', callback_data='upgrade_menu')],
         [InlineKeyboardButton('➕ ᴀᴅᴅ ᴛᴏ ᴄʜᴀɴɴᴇʟ ➕', url=f'https://t.me/{me.username}?startchannel=start')]
@@ -439,7 +505,7 @@ async def cb_handlers(client: Client, call: CallbackQuery):
 
 @bot.on_message(filters.command("help") & filters.private)
 async def cmd_help(client: Client, msg: Message):
-    await msg.reply_text("📖 <b>Full Command Guide:</b>\n\n📢 <b>1. Channel DMs:</b>\n• <code>/setwelcome</code> & <code>/setleft</code>\n• <code>/offwelcome</code> & <code>/offleft</code>\n\n🗃️ <b>2. Group Filters:</b>\n• <code>/addfilter [word] | [reply]</code>\n• <code>/delfilter [word]</code>\n• <code>/filters</code>\n\n⏱️ <b>3. Custom Timer:</b>\n• <code>/settime <seconds></code>")
+    await msg.reply_text("📖 <b>Full Command Guide:</b>\n\n📢 <b>1. Channel DMs:</b>\n• <code>/setwelcome</code> & <code>/setleft</code>\n• <code>/offwelcome</code> & <code>/offleft</code>\n\n🗃️ <b>2. Group Filters:</b>\n• <code>/addfilter [word] | [reply]</code>\n• <code>/delfilter [word]</code>\n• <code>/filters</code>\n\n⏱️ <b>3. Custom Timer:</b>\n• <code>/settime <seconds></code>\n\n📁 <b>4. TeraBox Links:</b>\n• <code>/set</code> - Generate Episode List\n• <code>/post</code> - Generate Episode Posts")
 
 # ==========================================
 # 4. GROUP FILTERS MANAGEMENT
@@ -554,19 +620,14 @@ async def group_filter_handler(client: Client, msg: Message):
             return 
 
 # ==========================================
-# 6. BYPASS LINK EXTRACTOR (NEW FEATURE - MULTILINE FIX)
+# 6. BYPASS LINK EXTRACTOR
 # ==========================================
-# filters.chat(-1003994123332) ensure karega ki bot sirf Source Group ko hi sune
 @bot.on_message(filters.chat(-1003994123332), group=1)
 async def bypass_link_extractor(client: Client, msg: Message):
     try:
-        # Message chahe normal text ho ya media caption, dono read karega
         content = msg.text or msg.caption
+        if not content: return 
         
-        if not content:
-            return 
-        
-        # re.DOTALL add kiya hai taaki next line aur symbols (❞, ✅) cross karke exact link nikal sake
         match = re.search(r"Bypassed Link:.*?(https?://\S+)", content, re.IGNORECASE | re.DOTALL)
         
         if match:
@@ -576,22 +637,161 @@ async def bypass_link_extractor(client: Client, msg: Message):
             if BYPASS_DEST_GROUP:
                 try:
                     dest_chat_id = int(BYPASS_DEST_GROUP)
-                    # Sirf URL destination group me bhejega
                     await client.send_message(
                         chat_id=dest_chat_id, 
                         text=extracted_url,
                         disable_web_page_preview=True
                     )
                     logging.info(f"✅ Link successfully forwarded to destination group.")
-                except ValueError:
-                    logging.error("❌ ERROR: BYPASS_DEST_GROUP ID sahi nahi hai.")
-                except Exception as send_err:
-                    logging.error(f"❌ ERROR: Destination group me bhejte waqt error aayi: {send_err}")
-            else:
-                logging.warning("⚠️ WARNING: BYPASS_DEST_GROUP ID set nahi hai.")
+                except ValueError: pass
+                except Exception as send_err: logging.error(f"❌ ERROR: Destination me error: {send_err}")
                 
     except Exception as e:
-        logging.error(f"❌ Bypass extractor module me unexpected error: {e}")
+        logging.error(f"❌ Bypass extractor module me error: {e}")
+
+# ==========================================
+# 7. TERABOX LINK COLLECTOR & POST MANAGER (Group 2)
+# ==========================================
+@bot.on_message(filters.command("set") | filters.regex(r'(?i)^/?set$'))
+async def sort_and_send_set(client: Client, message: Message):
+    user_id = message.from_user.id
+    
+    if user_id in user_links and user_links[user_id]:
+        await safe_reply(message, "⏳ **List ban rahi hai, thoda wait karein...**", parse_mode=enums.ParseMode.MARKDOWN)
+        
+        sorted_links = sorted(user_links[user_id], key=lambda x: x["ep"])
+        first_raw_text = sorted_links[0]["raw_text"]
+        title, year, main_lang, audio_tags = extract_info(first_raw_text)
+        title = title.replace('<', '').replace('>', '')
+        
+        final_text = f"<b>🎥 {title} {main_lang} 720p</b>\n"
+        final_text += "<b>━━━━━━━━━━━━━━━━━━━━</b>\n"
+        final_text += '<b>⁉️ HOW TO DOWNLOAD / PLAY ⏯️ :- <a href="https://t.me/kcsjbvxdxdxcc/3">CLICK HERE</a></b>\n'
+        final_text += "<b>━━━━━━━━━━━━━━━━━━━━</b>\n\n"
+        
+        for item in sorted_links:
+            final_text += f"<b>📁 EP {item['ep']}</b>\n<b>{item['url']}</b>\n\n"
+            
+        final_text += "<b>❤️‍🔥 Complete All Episodes ❤️‍🔥</b>\n\n"
+        final_text += "<b>👉 Join Our Backup Channel 👈</b>\n"
+        final_text += "<b>https://t.me/KOREAN_DRAMA_GT</b>"
+        
+        await safe_reply(message, final_text.strip(), parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
+        user_links[user_id] = [] 
+    else:
+        await safe_reply(message, "Aapne abhi tak koi valid link nahi bheja hai.")
+
+@bot.on_message(filters.command("post") | filters.regex(r'(?i)^/?post$'))
+async def send_designed_post(client: Client, message: Message):
+    user_id = message.from_user.id
+    
+    if user_id in user_links and user_links[user_id]:
+        await safe_reply(message, "⏳ **Posts ban rahe hain, thoda wait karein...**", parse_mode=enums.ParseMode.MARKDOWN)
+        
+        sorted_links = sorted(user_links[user_id], key=lambda x: x["ep"])
+        
+        episodes_data = {}
+        for item in sorted_links:
+            ep = item['ep']
+            if ep not in episodes_data:
+                episodes_data[ep] = {"urls": [], "raw_text": item["raw_text"]}
+            episodes_data[ep]["urls"].append(item['url'])
+            
+        for ep, data in episodes_data.items():
+            urls = data["urls"]
+            raw_text = data["raw_text"]
+            
+            title, year, main_lang, audio_tags = extract_info(raw_text)
+            title = title.replace('<', '').replace('>', '') 
+            
+            link_480 = urls[0] if len(urls) > 0 else "#"
+            link_720 = urls[1] if len(urls) > 1 else urls[0]
+            
+            final_text = f"""<b>🎬 {title} {main_lang}</b>
+<b>📅 YEAR: {year}</b>
+<b>💿 EPISODE:- {ep}</b>
+
+<b>🔊 [ AMZN {audio_tags} ]</b>
+
+<b>              🔮 TeraBox</b>
+<b> ▬▬▬▬▬▬▬▬▬▬▬▬▬ </b>
+<b>📁 480p ☞ <a href="{link_480}">CLICK HERE</a></b>
+
+<b>📁 720p ☞ <a href="{link_720}">CLICK HERE</a></b>
+<b> ▬▬▬▬▬▬▬▬▬▬▬▬▬ </b>
+<b>✅ All Episode Uploaded</b>
+
+<blockquote><b>🛑 TeraBox Ads Problem Solve:
+                                       <a href="https://t.me/kcsjbvxdxdxcc/19?single">CLICK HERE</a></b></blockquote>
+
+<b>🚨 Join Our Backup Channel:</b>
+<b>👇 https://t.me/KOREAN_DRAMA_GT</b>"""
+            
+            await safe_reply(message, final_text, parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
+            await asyncio.sleep(2)
+            
+        user_links[user_id] = [] 
+    else:
+        await safe_reply(message, "Aapne abhi tak koi valid link nahi bheja hai.")
+
+# Group 2 is explicitly used so it doesn't conflict with normal message handlers or group filters.
+@bot.on_message((filters.text | filters.caption) & ~filters.command(["start", "batch", "cancel", "settime", "setwelcome", "setleft", "offwelcome", "offleft", "help", "addfilter", "delfilter", "delallfilters", "filters", "set", "post"]), group=2)
+async def collect_links(client: Client, message: Message):
+    # Skip processing if message is from a channel or user is busy in bot setup states
+    if getattr(message, 'from_user', None) is None: return
+    user_id = message.from_user.id
+    if user_id in user_states: return 
+
+    try:
+        text = message.text or message.caption or ""
+        text_lower = text.lower().strip()
+        
+        # Safely pass command overrides
+        if text_lower in ['post', '/post']: return await send_designed_post(client, message)
+        if text_lower in ['set', '/set']: return await sort_and_send_set(client, message)
+            
+        clean_url = None
+        entities = getattr(message, 'entities', None) or getattr(message, 'caption_entities', None) or []
+        for ent in entities:
+            if getattr(ent, 'url', None):
+                clean_url = ent.url
+                break
+                
+        if not clean_url:
+            url_match = re.search(r'(https?://[^\s]+|[a-zA-Z0-9.-]+\.com/s/[^\s]+)', text)
+            if url_match:
+                clean_url = url_match.group(1)
+                if not clean_url.startswith('http'):
+                    clean_url = 'https://' + clean_url
+                    
+        if not clean_url: return
+            
+        preview_text = ""
+        if getattr(message, 'web_page', None):
+            title = getattr(message.web_page, 'title', "") or ""
+            desc = getattr(message.web_page, 'description', "") or ""
+            preview_text = f"{title} {desc}"
+            
+        if not preview_text.strip():
+            preview_text = await fetch_terabox_title(clean_url)
+            
+        combined_text = f"{text} {preview_text}"
+        ep_match = re.search(r'(?:EP|Episode|S\d+EP)\s*0*(\d+)', combined_text, re.IGNORECASE)
+        
+        if ep_match:
+            ep_number = int(ep_match.group(1))
+            if user_id not in user_links: user_links[user_id] = []
+                
+            if not any(item['ep'] == ep_number for item in user_links[user_id]):
+                user_links[user_id].append({"ep": ep_number, "url": clean_url, "raw_text": combined_text})
+                await safe_reply(message, f"✅ EP {ep_number} add ho gaya!")
+            else:
+                await safe_reply(message, f"⚠️ EP {ep_number} pehle se added hai.")
+        else:
+            await safe_reply(message, f"❌ **EP Detect Nahi Hua!**\n\n**Bot ne ye padha:**\n`{combined_text[:100]}`", parse_mode=enums.ParseMode.MARKDOWN)
+            
+    except Exception as e:
+        logging.error(f"Message Processing Error: {e}")
 
 # --- BACKGROUND DYNAMIC CLEANUP TASK (EDIT FILTERS / DELETE BATCHES) ---
 async def cleanup_task():
@@ -618,7 +818,7 @@ async def cleanup_task():
                     valid.append(item)
             await update_chat_data(chat['chat_id'], {"cleanup": valid})
 
-# --- RENDER WEB ALIVE SERVER ---
+# --- RENDER WEB ALIVE SERVER (Original aiohttp from bot.py) ---
 async def handle_ping(request): return web.Response(text="Pyrogram VIP Bot Active!")
 async def start_dummy_server():
     app = web.Application()
@@ -637,7 +837,7 @@ async def start_bot():
     asyncio.create_task(cleanup_task())
     
     await bot.start()
-    logging.info("🚀 Pyrogram VIP Bot is Now Online & Running Perfectly!")
+    logging.info("🚀 Pyrogram VIP Unified Bot is Now Online & Running Perfectly!")
     await idle()
     await bot.stop()
 
