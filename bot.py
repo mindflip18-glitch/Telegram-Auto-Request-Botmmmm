@@ -7,7 +7,7 @@ import logging
 from aiohttp import web
 from pyrogram import Client, filters, enums, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, ChatJoinRequest
-from pyrogram.handlers import MessageHandler, ChatJoinRequestHandler, CallbackQueryHandler
+from pyrogram.handlers import MessageHandler, ChatJoinRequestHandler
 from pyrogram.errors import FloodWait
 from motor.motor_asyncio import AsyncIOMotorClient
 
@@ -24,11 +24,10 @@ PORT = int(os.environ.get("PORT", 10000))
 # --- DATABASE SETUP ---
 mongo_client = AsyncIOMotorClient(MONGO_URI)
 db = mongo_client.clone_factory
-clones_db = db.clones        # Stores cloned bot tokens
-settings_db = db.settings    # Stores features config per bot (caption, dm, admins, fsub)
-users_db = db.users          # Stores audience data per bot
-user_states = {}             # In-memory states {bot_id_user_id: state_data}
-tera_links = {}              # In-memory TeraBox links
+clones_db = db.clones        
+settings_db = db.settings    
+users_db = db.users          
+user_states = {}             
 
 # --- HELPER FUNCTIONS ---
 async def is_admin(client: Client, user_id: int) -> bool:
@@ -46,21 +45,18 @@ def decode_data(token: str) -> str:
     return base64.urlsafe_b64decode(token.encode()).decode()
 
 # ==========================================
-# CLONE BOT HANDLERS (DYNAMICALLY ADDED)
+# CLONE BOT HANDLERS 
 # ==========================================
 
 async def clone_start(client: Client, msg: Message):
     user_id = msg.from_user.id
     bot_id = client.me.id
     
-    # Save User to DB for Broadcast
+    # User data save for Broadcast
     await users_db.update_one({"bot_id": bot_id, "user_id": user_id}, {"$set": {"name": msg.from_user.first_name}}, upsert=True)
     
     if len(msg.command) > 1:
         param = msg.command[1]
-        
-        # FSub Check Logic Can Be Inserted Here
-        # Assuming FSub is verified...
         
         if param.startswith("batch_") or param.startswith("genlink_"):
             token = param.split("_", 1)[1]
@@ -70,7 +66,7 @@ async def clone_start(client: Client, msg: Message):
             first_id = int(data[1])
             last_id = int(data[2]) if param.startswith("batch_") else first_id
             
-            wait_msg = await msg.reply_text("⏳ *Processing files...*", parse_mode=enums.ParseMode.MARKDOWN)
+            wait_msg = await msg.reply_text("⏳ *Sending files blazingly fast...*", parse_mode=enums.ParseMode.MARKDOWN)
             config = await settings_db.find_one({"bot_id": bot_id})
             caption_on = config.get("caption_on", True) if config else True
             delete_delay = config.get("delete_time", 600) if config else 600
@@ -83,26 +79,28 @@ async def clone_start(client: Client, msg: Message):
                     
                     if caption_on and (tg_msg.document or tg_msg.video or tg_msg.audio):
                         fname = getattr(tg_msg.document or tg_msg.video or tg_msg.audio, 'file_name', '🎬 Movie File')
-                        cap = f"<b>{fname}</b>\n\n<b>⚜️ Powered By : @GTKOREANDRAMA</b>"
+                        cap = f"<b>{fname}</b>\n\n<b>⚜️️ Powered By : @GTKOREANDRAMA</b>"
                         sent = await client.copy_message(msg.chat.id, chat_id, m_id, caption=cap, parse_mode=enums.ParseMode.HTML)
                     else:
                         sent = await client.copy_message(msg.chat.id, chat_id, m_id)
                     
                     sent_msgs.append(sent.id)
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(0.05) # SPEED INCREASED (was 0.5s)
                 except FloodWait as e:
-                    await asyncio.sleep(e.value)
+                    await asyncio.sleep(e.value + 1) # Auto-handle telegram limits
                 except Exception: pass
             
             await wait_msg.delete()
             
             if sent_msgs:
-                alert = await msg.reply_text(f"⚠️ *Files will be deleted in {delete_delay//60} minutes!* Forward them to Saved Messages.", parse_mode=enums.ParseMode.MARKDOWN)
+                alert = await msg.reply_text(f"⚠️ *Files will be auto-deleted in {delete_delay//60} minutes!* Save them quickly.", parse_mode=enums.ParseMode.MARKDOWN)
                 await asyncio.sleep(delete_delay)
-                await client.delete_messages(msg.chat.id, sent_msgs + [alert.id])
+                try:
+                    await client.delete_messages(msg.chat.id, sent_msgs + [alert.id])
+                except: pass
             return
 
-    await msg.reply_text(f"Welcome to **{client.me.first_name}**! I am an Advanced Media Bot.", parse_mode=enums.ParseMode.MARKDOWN)
+    await msg.reply_text(f"Welcome to **{client.me.first_name}**! Send /batch or /genlink to generate links.", parse_mode=enums.ParseMode.MARKDOWN)
 
 
 async def link_generator(client: Client, msg: Message):
@@ -112,12 +110,19 @@ async def link_generator(client: Client, msg: Message):
     
     if cmd == "genlink":
         user_states[state_key] = {"type": "genlink", "step": "wait_msg"}
-        await msg.reply_text("Forward the single file from your channel.")
+        await msg.reply_text("Forward the single file from your channel.\n(Send /cancel to abort)")
     elif cmd == "batch":
         user_states[state_key] = {"type": "batch", "step": "wait_first"}
-        await msg.reply_text("Forward the FIRST message of the batch.")
+        await msg.reply_text("Forward the FIRST message of the batch.\n(Send /cancel to abort)")
+    elif cmd == "cancel":
+        user_states.pop(state_key, None)
+        await msg.reply_text("✅ Action cancelled.")
+
 
 async def message_state_handler(client: Client, msg: Message):
+    # Ignore text commands so they don't trigger "Please forward"
+    if msg.text and msg.text.startswith('/'): return 
+    
     user_id = msg.from_user.id
     bot_id = client.me.id
     state_key = f"{bot_id}_{user_id}"
@@ -127,7 +132,7 @@ async def message_state_handler(client: Client, msg: Message):
     
     if state["step"] == "wait_msg" or state["step"] == "wait_first":
         if not msg.forward_from_chat:
-            return await msg.reply_text("Please forward from a channel.")
+            return await msg.reply_text("❌ Please forward a message from a channel!")
         
         chat_id = msg.forward_from_chat.id
         msg_id = msg.forward_from_message_id
@@ -140,9 +145,12 @@ async def message_state_handler(client: Client, msg: Message):
             
         elif state["type"] == "batch":
             state.update({"step": "wait_last", "chat_id": chat_id, "first_id": msg_id})
-            await msg.reply_text("Now forward the LAST message of the batch.")
+            await msg.reply_text("✅ First message saved! Now forward the LAST message of the batch.")
             
     elif state["step"] == "wait_last":
+        if not msg.forward_from_chat:
+            return await msg.reply_text("❌ Please forward from a channel!")
+            
         msg_id = msg.forward_from_message_id
         chat_id = state["chat_id"]
         first_id = state["first_id"]
@@ -177,6 +185,14 @@ async def admin_settings(client: Client, msg: Message):
             return await msg.reply_text("Reply to a formatted message to set it as Welcome DM.")
         await settings_db.update_one({"bot_id": bot_id}, {"$set": {"dm_msg_id": msg.reply_to_message.id, "dm_chat_id": msg.chat.id}}, upsert=True)
         await msg.reply_text("✅ Welcome DM successfully saved!")
+        
+    elif cmd == "addadmin" and len(msg.command) > 1:
+        await settings_db.update_one({"bot_id": bot_id}, {"$addToSet": {"admins": int(msg.command[1])}}, upsert=True)
+        await msg.reply_text(f"✅ Admin {msg.command[1]} added successfully!")
+        
+    elif cmd == "deladmin" and len(msg.command) > 1:
+        await settings_db.update_one({"bot_id": bot_id}, {"$pull": {"admins": int(msg.command[1])}})
+        await msg.reply_text(f"🗑 Admin {msg.command[1]} removed.")
 
 
 async def auto_approve_join(client: Client, req: ChatJoinRequest):
@@ -207,7 +223,7 @@ async def broadcast(client: Client, msg: Message):
         try:
             await client.copy_message(u["user_id"], msg.chat.id, msg.reply_to_message.id)
             success += 1
-            await asyncio.sleep(0.3)  # Anti-ban smart sleep
+            await asyncio.sleep(0.1) 
         except FloodWait as e:
             await asyncio.sleep(e.value)
         except Exception:
@@ -216,27 +232,17 @@ async def broadcast(client: Client, msg: Message):
             
     await status.edit_text(f"✅ **Broadcast Complete**\nSuccess: {success}\nFailed/Blocked: {failed}")
 
-
-async def bypass_extractor(client: Client, msg: Message):
-    # Triggers in designated bypass groups
-    text = msg.text or msg.caption or ""
-    if "Bypassed Link:" in text:
-        try:
-            title = text.split("\n")[0].strip()
-            link_match = re.search(r"Bypassed Link:\s*(https?://\S+)", text, re.IGNORECASE)
-            if link_match:
-                clean_link = link_match.group(1)
-                final_caption = f"🎬 **{title}**\n🔗 **Download/Watch:** {clean_link}\n\n⚜️ **Powered By: @GTKOREANDRAMA**"
-                config = await settings_db.find_one({"bot_id": client.me.id})
-                dest_group = config.get("bypass_dest")
-                if dest_group:
-                    await client.send_message(dest_group, final_caption, disable_web_page_preview=True)
-        except Exception as e:
-            logging.error(f"Bypass Error: {e}")
-
 # ==========================================
-# MULTI-ADMIN & MASTER BOT MANAGEMENT
+# MASTER BOT MANAGEMENT & ATTACH ROUTINES
 # ==========================================
+
+def attach_clone_handlers(bot: Client):
+    bot.add_handler(MessageHandler(clone_start, filters.command("start") & filters.private))
+    bot.add_handler(MessageHandler(link_generator, filters.command(["batch", "genlink", "cancel"])))
+    bot.add_handler(MessageHandler(admin_settings, filters.command(["caption", "settime", "setdm", "addadmin", "deladmin"])))
+    bot.add_handler(MessageHandler(broadcast, filters.command("broadcast")))
+    bot.add_handler(MessageHandler(message_state_handler, filters.private))
+    bot.add_handler(ChatJoinRequestHandler(auto_approve_join))
 
 async def master_clone(client: Client, msg: Message):
     if msg.from_user.id != OWNER_ID: return
@@ -252,36 +258,18 @@ async def master_clone(client: Client, msg: Message):
         await new_bot.start()
         bot_info = await new_bot.get_me()
         
-        # Attach Handlers to the new Clone
-        new_bot.add_handler(MessageHandler(clone_start, filters.command("start") & filters.private))
-        new_bot.add_handler(MessageHandler(link_generator, filters.command(["batch", "genlink"])))
-        new_bot.add_handler(MessageHandler(message_state_handler, filters.private & ~filters.command(["start", "batch", "genlink", "caption", "settime", "setdm", "broadcast"])))
-        new_bot.add_handler(MessageHandler(admin_settings, filters.command(["caption", "settime", "setdm"])))
-        new_bot.add_handler(MessageHandler(broadcast, filters.command("broadcast")))
-        new_bot.add_handler(MessageHandler(bypass_extractor, filters.group & (filters.text | filters.caption)))
-        new_bot.add_handler(ChatJoinRequestHandler(auto_approve_join))
+        attach_clone_handlers(new_bot)
         
+        # Save token to clones DB
         await clones_db.update_one({"bot_id": bot_info.id}, {"$set": {"token": token, "username": bot_info.username}}, upsert=True)
-        await wait.edit_text(f"✅ **Clone Factory Success!**\nBot: @{bot_info.username} is now Live & Protected.")
+        # Make the creator an admin automatically in settings
+        await settings_db.update_one({"bot_id": bot_info.id}, {"$addToSet": {"admins": msg.from_user.id}}, upsert=True)
+        
+        await wait.edit_text(f"✅ **Clone Factory Success!**\nBot: @{bot_info.username} is Live!\nYou have been set as Admin.")
         
     except Exception as e:
         await wait.edit_text(f"❌ Failed to start clone: {e}")
 
-async def multi_admin_manager(client: Client, msg: Message):
-    if msg.from_user.id != OWNER_ID: return
-    cmd = msg.command[0]
-    bot_id = client.me.id
-    
-    if cmd == "addadmin" and len(msg.command) > 1:
-        await settings_db.update_one({"bot_id": bot_id}, {"$addToSet": {"admins": int(msg.command[1])}}, upsert=True)
-        await msg.reply_text(f"✅ Admin {msg.command[1]} added to Clone!")
-    elif cmd == "deladmin" and len(msg.command) > 1:
-        await settings_db.update_one({"bot_id": bot_id}, {"$pull": {"admins": int(msg.command[1])}})
-        await msg.reply_text(f"🗑 Admin removed.")
-
-# ==========================================
-# SERVER & STARTUP ROUTINES
-# ==========================================
 
 async def web_server():
     async def handle(request): return web.Response(text="Master-Clone Engine Live!")
@@ -298,16 +286,7 @@ async def boot_all_clones():
         try:
             bot = Client(f"clone_{c['bot_id']}", api_id=API_ID, api_hash=API_HASH, bot_token=c['token'])
             await bot.start()
-            
-            # Re-attach handlers on reboot
-            bot.add_handler(MessageHandler(clone_start, filters.command("start") & filters.private))
-            bot.add_handler(MessageHandler(link_generator, filters.command(["batch", "genlink"])))
-            bot.add_handler(MessageHandler(message_state_handler, filters.private & ~filters.command(["start", "batch", "genlink", "caption", "settime", "setdm", "broadcast"])))
-            bot.add_handler(MessageHandler(admin_settings, filters.command(["caption", "settime", "setdm"])))
-            bot.add_handler(MessageHandler(multi_admin_manager, filters.command(["addadmin", "deladmin"])))
-            bot.add_handler(MessageHandler(broadcast, filters.command("broadcast")))
-            bot.add_handler(MessageHandler(bypass_extractor, filters.group & (filters.text | filters.caption)))
-            bot.add_handler(ChatJoinRequestHandler(auto_approve_join))
+            attach_clone_handlers(bot)
             logging.info(f"Clone @{c['username']} restarted successfully.")
         except Exception as e:
             logging.error(f"Error starting clone {c['bot_id']}: {e}")
@@ -317,7 +296,6 @@ async def main():
         logging.error("Missing Environment Variables!")
         return
 
-    # Master Client Start
     master = Client("master_factory", api_id=API_ID, api_hash=API_HASH, bot_token=MASTER_TOKEN)
     master.add_handler(MessageHandler(master_clone, filters.command("clone") & filters.private))
     
