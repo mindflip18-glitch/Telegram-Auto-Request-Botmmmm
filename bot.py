@@ -18,7 +18,7 @@ API_ID = int(os.environ.get("API_ID", "0"))
 API_HASH = os.environ.get("API_HASH", "")
 MASTER_TOKEN = os.environ.get("MASTER_TOKEN", "")
 MONGO_URI = os.environ.get("MONGO_URI", "")
-OWNER_ID = int(os.environ.get("OWNER_ID", "0")) # Main Master Admin
+OWNER_ID = int(os.environ.get("OWNER_ID", "0")) 
 PORT = int(os.environ.get("PORT", 10000))
 
 # --- DATABASE SETUP ---
@@ -27,7 +27,9 @@ db = mongo_client.clone_factory
 clones_db = db.clones        
 settings_db = db.settings    
 users_db = db.users          
+
 user_states = {}             
+active_clones = {} 
 
 # --- HELPER FUNCTIONS ---
 async def is_admin(client: Client, user_id: int) -> bool:
@@ -52,55 +54,69 @@ async def clone_start(client: Client, msg: Message):
     user_id = msg.from_user.id
     bot_id = client.me.id
     
-    # User data save for Broadcast
     await users_db.update_one({"bot_id": bot_id, "user_id": user_id}, {"$set": {"name": msg.from_user.first_name}}, upsert=True)
     
-    if len(msg.command) > 1:
-        param = msg.command[1]
+    # Agar sirf /start hai, toh kuch reply nahi karna
+    if len(msg.command) <= 1:
+        return 
         
-        if param.startswith("batch_") or param.startswith("genlink_"):
-            token = param.split("_", 1)[1]
-            data = decode_data(token).split(":")
+    param = msg.command[1]
+    
+    if param.startswith("batch_") or param.startswith("genlink_"):
+        token = param.split("_", 1)[1]
+        data = decode_data(token).split(":")
+        
+        chat_id = int(data[0])
+        first_id = int(data[1])
+        last_id = int(data[2]) if param.startswith("batch_") else first_id
+        
+        wait_msg = await msg.reply_text("⏳ <i>Sending your files, please wait...</i>", parse_mode=enums.ParseMode.HTML)
+        
+        config = await settings_db.find_one({"bot_id": bot_id}) or {}
+        caption_on = config.get("caption_on", True)
+        delete_delay = config.get("delete_time", 900) # Default 15 mins (900s)
+        cap_link = config.get("caption_link", "https://t.me/KOREAN_DRAMA_GT")
+        watermark = config.get("watermark", "⚜️ Powered By : @GTKOREANDRAMA")
+        
+        sent_msgs = []
+        for m_id in range(first_id, last_id + 1):
+            try:
+                tg_msg = await client.get_messages(chat_id, m_id)
+                if tg_msg.empty: continue
+                
+                if caption_on and (tg_msg.document or tg_msg.video or tg_msg.audio):
+                    fname = getattr(tg_msg.document or tg_msg.video or tg_msg.audio, 'file_name', '🎬 Movie/Series File')
+                    # Custom Editable Caption with File Name as Link
+                    cap = f"<b><a href='{cap_link}'>{fname}</a></b>\n\n<b>{watermark}</b>"
+                    sent = await client.copy_message(msg.chat.id, chat_id, m_id, caption=cap, parse_mode=enums.ParseMode.HTML)
+                else:
+                    sent = await client.copy_message(msg.chat.id, chat_id, m_id)
+                
+                sent_msgs.append(sent.id)
+                await asyncio.sleep(0.05) 
+            except FloodWait as e:
+                await asyncio.sleep(e.value + 1)
+            except Exception: pass
+        
+        await wait_msg.delete()
+        
+        if sent_msgs:
+            # Dynamic Time Calculation for Image-Style Alert
+            time_text = f"{delete_delay // 60} minutes" if delete_delay >= 60 else f"{delete_delay} seconds"
             
-            chat_id = int(data[0])
-            first_id = int(data[1])
-            last_id = int(data[2]) if param.startswith("batch_") else first_id
+            alert_text = (
+                "⚠️ <u><b>Important:</b></u>\n\n"
+                f"<i>All Messages will be deleted after <b>{time_text}</b>. Please save or forward these "
+                "messages to your <b>personal saved messages</b> to avoid losing them!</i>"
+            )
             
-            wait_msg = await msg.reply_text("⏳ *Sending files blazingly fast...*", parse_mode=enums.ParseMode.MARKDOWN)
-            config = await settings_db.find_one({"bot_id": bot_id})
-            caption_on = config.get("caption_on", True) if config else True
-            delete_delay = config.get("delete_time", 600) if config else 600
+            alert = await msg.reply_text(alert_text, parse_mode=enums.ParseMode.HTML)
             
-            sent_msgs = []
-            for m_id in range(first_id, last_id + 1):
-                try:
-                    tg_msg = await client.get_messages(chat_id, m_id)
-                    if tg_msg.empty: continue
-                    
-                    if caption_on and (tg_msg.document or tg_msg.video or tg_msg.audio):
-                        fname = getattr(tg_msg.document or tg_msg.video or tg_msg.audio, 'file_name', '🎬 Movie File')
-                        cap = f"<b>{fname}</b>\n\n<b>⚜️️ Powered By : @GTKOREANDRAMA</b>"
-                        sent = await client.copy_message(msg.chat.id, chat_id, m_id, caption=cap, parse_mode=enums.ParseMode.HTML)
-                    else:
-                        sent = await client.copy_message(msg.chat.id, chat_id, m_id)
-                    
-                    sent_msgs.append(sent.id)
-                    await asyncio.sleep(0.05) # SPEED INCREASED (was 0.5s)
-                except FloodWait as e:
-                    await asyncio.sleep(e.value + 1) # Auto-handle telegram limits
-                except Exception: pass
-            
-            await wait_msg.delete()
-            
-            if sent_msgs:
-                alert = await msg.reply_text(f"⚠️ *Files will be auto-deleted in {delete_delay//60} minutes!* Save them quickly.", parse_mode=enums.ParseMode.MARKDOWN)
-                await asyncio.sleep(delete_delay)
-                try:
-                    await client.delete_messages(msg.chat.id, sent_msgs + [alert.id])
-                except: pass
-            return
-
-    await msg.reply_text(f"Welcome to **{client.me.first_name}**! Send /batch or /genlink to generate links.", parse_mode=enums.ParseMode.MARKDOWN)
+            # Auto-Delete Logic
+            await asyncio.sleep(delete_delay)
+            try:
+                await client.delete_messages(msg.chat.id, sent_msgs + [alert.id])
+            except: pass
 
 
 async def link_generator(client: Client, msg: Message):
@@ -120,7 +136,6 @@ async def link_generator(client: Client, msg: Message):
 
 
 async def message_state_handler(client: Client, msg: Message):
-    # Ignore text commands so they don't trigger "Please forward"
     if msg.text and msg.text.startswith('/'): return 
     
     user_id = msg.from_user.id
@@ -176,9 +191,20 @@ async def admin_settings(client: Client, msg: Message):
         try:
             sec = int(msg.command[1])
             await settings_db.update_one({"bot_id": bot_id}, {"$set": {"delete_time": sec}}, upsert=True)
-            await msg.reply_text(f"✅ Auto-Delete timer set to {sec} seconds.")
+            time_txt = f"{sec//60} minutes" if sec >= 60 else f"{sec} seconds"
+            await msg.reply_text(f"✅ Auto-Delete timer set to {time_txt}.")
         except:
-            await msg.reply_text("Usage: `/settime 600`")
+            await msg.reply_text("Usage: `/settime 900` (for 15 minutes)")
+            
+    elif cmd == "setlink" and len(msg.command) > 1:
+        new_link = msg.command[1]
+        await settings_db.update_one({"bot_id": bot_id}, {"$set": {"caption_link": new_link}}, upsert=True)
+        await msg.reply_text(f"✅ Caption File Link updated to:\n{new_link}")
+        
+    elif cmd == "setwatermark" and len(msg.command) > 1:
+        new_wm = msg.text.split(None, 1)[1]
+        await settings_db.update_one({"bot_id": bot_id}, {"$set": {"watermark": new_wm}}, upsert=True)
+        await msg.reply_text(f"✅ Watermark updated to:\n{new_wm}")
             
     elif cmd == "setdm":
         if not msg.reply_to_message:
@@ -232,14 +258,15 @@ async def broadcast(client: Client, msg: Message):
             
     await status.edit_text(f"✅ **Broadcast Complete**\nSuccess: {success}\nFailed/Blocked: {failed}")
 
+
 # ==========================================
-# MASTER BOT MANAGEMENT & ATTACH ROUTINES
+# MASTER BOT MANAGEMENT & CLONE CONTROLS
 # ==========================================
 
 def attach_clone_handlers(bot: Client):
     bot.add_handler(MessageHandler(clone_start, filters.command("start") & filters.private))
     bot.add_handler(MessageHandler(link_generator, filters.command(["batch", "genlink", "cancel"])))
-    bot.add_handler(MessageHandler(admin_settings, filters.command(["caption", "settime", "setdm", "addadmin", "deladmin"])))
+    bot.add_handler(MessageHandler(admin_settings, filters.command(["caption", "settime", "setlink", "setwatermark", "setdm", "addadmin", "deladmin"])))
     bot.add_handler(MessageHandler(broadcast, filters.command("broadcast")))
     bot.add_handler(MessageHandler(message_state_handler, filters.private))
     bot.add_handler(ChatJoinRequestHandler(auto_approve_join))
@@ -260,9 +287,8 @@ async def master_clone(client: Client, msg: Message):
         
         attach_clone_handlers(new_bot)
         
-        # Save token to clones DB
+        active_clones[bot_info.id] = new_bot
         await clones_db.update_one({"bot_id": bot_info.id}, {"$set": {"token": token, "username": bot_info.username}}, upsert=True)
-        # Make the creator an admin automatically in settings
         await settings_db.update_one({"bot_id": bot_info.id}, {"$addToSet": {"admins": msg.from_user.id}}, upsert=True)
         
         await wait.edit_text(f"✅ **Clone Factory Success!**\nBot: @{bot_info.username} is Live!\nYou have been set as Admin.")
@@ -270,6 +296,49 @@ async def master_clone(client: Client, msg: Message):
     except Exception as e:
         await wait.edit_text(f"❌ Failed to start clone: {e}")
 
+async def list_clones(client: Client, msg: Message):
+    if msg.from_user.id != OWNER_ID: return
+    
+    clones = await clones_db.find().to_list(length=None)
+    if not clones:
+        return await msg.reply_text("🤖 Koi bhi active clone bot nahi hai.")
+        
+    text = "🤖 **Active Clone Bots:**\n\n"
+    for c in clones:
+        status = "🟢 Live" if c['bot_id'] in active_clones else "🔴 Offline"
+        text += f"• @{c.get('username', 'Unknown')} (ID: `{c['bot_id']}`) - {status}\n"
+        
+    text += "\nKisi bot ko delete karne ke liye type karein:\n`/delclone [bot_id]`"
+    await msg.reply_text(text)
+
+async def delete_clone(client: Client, msg: Message):
+    if msg.from_user.id != OWNER_ID: return
+    
+    if len(msg.command) < 2:
+        return await msg.reply_text("Usage: `/delclone [bot_id]`")
+        
+    try:
+        target_id = int(msg.command[1])
+    except:
+        return await msg.reply_text("❌ Please ek valid Bot ID dalein (Numbers only).")
+        
+    if target_id in active_clones:
+        try:
+            await active_clones[target_id].stop()
+            del active_clones[target_id]
+        except Exception as e:
+            logging.error(f"Error stopping client: {e}")
+            
+    result = await clones_db.delete_one({"bot_id": target_id})
+    
+    if result.deleted_count > 0:
+        await msg.reply_text(f"✅ Clone Bot (ID: `{target_id}`) ko successfully disconnect kar diya gaya hai.")
+    else:
+        await msg.reply_text("❌ Ye Bot ID database mein nahi mili.")
+
+# ==========================================
+# SERVER & STARTUP ROUTINES
+# ==========================================
 
 async def web_server():
     async def handle(request): return web.Response(text="Master-Clone Engine Live!")
@@ -287,7 +356,8 @@ async def boot_all_clones():
             bot = Client(f"clone_{c['bot_id']}", api_id=API_ID, api_hash=API_HASH, bot_token=c['token'])
             await bot.start()
             attach_clone_handlers(bot)
-            logging.info(f"Clone @{c['username']} restarted successfully.")
+            active_clones[c['bot_id']] = bot
+            logging.info(f"Clone @{c.get('username', 'Bot')} restarted successfully.")
         except Exception as e:
             logging.error(f"Error starting clone {c['bot_id']}: {e}")
 
@@ -298,6 +368,8 @@ async def main():
 
     master = Client("master_factory", api_id=API_ID, api_hash=API_HASH, bot_token=MASTER_TOKEN)
     master.add_handler(MessageHandler(master_clone, filters.command("clone") & filters.private))
+    master.add_handler(MessageHandler(list_clones, filters.command("clones") & filters.private))
+    master.add_handler(MessageHandler(delete_clone, filters.command("delclone") & filters.private))
     
     await master.start()
     logging.info("Master Factory Bot is Online!")
