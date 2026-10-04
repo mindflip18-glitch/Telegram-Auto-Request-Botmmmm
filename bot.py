@@ -8,7 +8,7 @@ from aiohttp import web
 from pyrogram import Client, filters, enums, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, ChatJoinRequest
 from pyrogram.handlers import MessageHandler, ChatJoinRequestHandler
-from pyrogram.errors import FloodWait, UserIsBlocked, PeerIdInvalid
+from pyrogram.errors import FloodWait, UserIsBlocked, PeerIdInvalid, RPCError
 from motor.motor_asyncio import AsyncIOMotorClient
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -27,7 +27,7 @@ db = mongo_client.clone_factory
 clones_db = db.clones        
 settings_db = db.settings    
 users_db = db.users          
-pending_reqs_db = db.pending_requests # NEW: Saves delayed join requests to avoid crashes
+pending_reqs_db = db.pending_requests # ANTI-CRASH QUEUE FOR LONG DELAYS
 
 user_states = {}             
 active_clones = {} 
@@ -61,6 +61,9 @@ async def clone_start(client: Client, msg: Message):
     user_id = msg.from_user.id
     bot_id = client.me.id
     
+    # Auto-cancel any old pending state if user sends /start
+    user_states.pop(f"{bot_id}_{user_id}", None)
+    
     await users_db.update_one({"bot_id": bot_id, "user_id": user_id}, {"$set": {"name": msg.from_user.first_name}}, upsert=True)
     
     if len(msg.command) <= 1: return 
@@ -90,9 +93,14 @@ async def clone_start(client: Client, msg: Message):
                 if tg_msg.empty: continue
                 
                 if caption_on and (tg_msg.document or tg_msg.video or tg_msg.audio):
-                    raw_fname = getattr(tg_msg.document or tg_msg.video or tg_msg.audio, 'file_name', '🎬 Movie/Series File')
+                    # Fetch filename safely
+                    media_obj = tg_msg.document or tg_msg.video or tg_msg.audio
+                    raw_fname = getattr(media_obj, 'file_name', None) or '🎬 Movie/Series File'
+                    
+                    # HTML Safety for Bold Tags
                     safe_fname = str(raw_fname).replace("<", "&lt;").replace(">", "&gt;").replace("&", "&amp;")
                     cap = f"<b><a href='{cap_link}'>{safe_fname}</a></b>\n\n<b>{watermark}</b>"
+                    
                     sent = await client.copy_message(msg.chat.id, chat_id, m_id, caption=cap, parse_mode=enums.ParseMode.HTML)
                 else:
                     sent = await client.copy_message(msg.chat.id, chat_id, m_id)
@@ -106,6 +114,7 @@ async def clone_start(client: Client, msg: Message):
         await wait_msg.delete()
         
         if sent_msgs:
+            # Dynamic Image-Style Delete Alert
             time_text = f"{delete_delay // 60} minutes" if delete_delay >= 60 else f"{delete_delay} seconds"
             alert_text = (
                 "⚠️ <u><b>Important:</b></u>\n\n"
@@ -125,24 +134,27 @@ async def link_generator(client: Client, msg: Message):
     cmd = msg.command[0]
     state_key = f"{client.me.id}_{msg.from_user.id}"
     
+    # ALWAYS Auto-cancel any previous stuck command before starting a new one
+    user_states.pop(state_key, None)
+    
     if cmd == "genlink":
         user_states[state_key] = {"type": "genlink", "step": "wait_msg"}
-        await msg.reply_text("Forward the single file from your channel.\n(Send /cancel to abort)")
+        await msg.reply_text("✅ **GenLink Mode Active**\nForward the single file from your channel.\n(Send /cancel to abort)")
     elif cmd == "batch":
         user_states[state_key] = {"type": "batch", "step": "wait_first"}
-        await msg.reply_text("Forward the FIRST message of the batch.\n(Send /cancel to abort)")
+        await msg.reply_text("✅ **Batch Mode Active**\nForward the FIRST message of the batch.\n(Send /cancel to abort)")
     elif cmd == "cancel":
-        user_states.pop(state_key, None)
-        await msg.reply_text("✅ Action cancelled.")
+        await msg.reply_text("✅ Action cancelled. Bot is back to normal.")
 
 
 async def message_state_handler(client: Client, msg: Message):
-    if msg.text and msg.text.startswith('/'): return 
+    state_key = f"{client.me.id}_{msg.from_user.id}"
     
-    user_id = msg.from_user.id
-    bot_id = client.me.id
-    state_key = f"{bot_id}_{user_id}"
-    
+    # If user sends ANY command, drop the wait state instantly
+    if msg.text and msg.text.startswith('/'): 
+        user_states.pop(state_key, None)
+        return 
+        
     if state_key not in user_states: return
     state = user_states[state_key]
     
@@ -183,6 +195,9 @@ async def admin_settings(client: Client, msg: Message):
     bot_id = client.me.id
     cmd = msg.command[0]
     
+    # Auto-cancel old pending state
+    user_states.pop(f"{bot_id}_{msg.from_user.id}", None)
+    
     if cmd == "caption":
         val = msg.command[1].lower() == "on" if len(msg.command)>1 else True
         await settings_db.update_one({"bot_id": bot_id}, {"$set": {"caption_on": val}}, upsert=True)
@@ -221,7 +236,7 @@ async def admin_settings(client: Client, msg: Message):
         if not msg.reply_to_message:
             return await msg.reply_text("Reply to a formatted message to set it as Welcome DM.")
         await settings_db.update_one({"bot_id": bot_id}, {"$set": {"dm_msg_id": msg.reply_to_message.id, "dm_chat_id": msg.chat.id}}, upsert=True)
-        await msg.reply_text("✅ Welcome DM successfully saved!")
+        await msg.reply_text("✅ Welcome DM successfully saved! (It will be exactly the same as your message)")
         
     elif cmd == "addadmin" and len(msg.command) > 1:
         try:
@@ -246,7 +261,7 @@ async def auto_approve_join(client: Client, req: ChatJoinRequest):
         config = await settings_db.find_one({"bot_id": bot_id}) or {}
         delay = config.get("approve_delay", 0)
         
-        # Smart Database Queueing for Delayed Requests
+        # SMART DATABASE QUEUE: Prevents RAM crash on long delays (e.g. 4 hours)
         if delay > 0:
             execute_at = time.time() + delay
             await pending_reqs_db.insert_one({
@@ -256,9 +271,9 @@ async def auto_approve_join(client: Client, req: ChatJoinRequest):
                 "first_name": req.from_user.first_name,
                 "execute_at": execute_at
             })
-            return # Save and forget. Background task will handle it.
+            return 
             
-        # If no delay, approve instantly
+        # INSTANT APPROVAL
         await req.approve()
         await users_db.update_one({"bot_id": bot_id, "user_id": req.from_user.id}, {"$set": {"name": req.from_user.first_name}}, upsert=True)
         if config and config.get("dm_msg_id"):
@@ -268,14 +283,13 @@ async def auto_approve_join(client: Client, req: ChatJoinRequest):
         logging.error(f"Join Request Error: {e}")
 
 # ==========================================
-# BACKGROUND LOOP (ANTI-CRASH)
+# BACKGROUND LOOP (100% CRASH-PROOF)
 # ==========================================
 
 async def background_approval_task():
     while True:
         try:
             now = time.time()
-            # Find all requests whose delay time has finished
             pending_requests = await pending_reqs_db.find({"execute_at": {"$lte": now}}).to_list(length=None)
             
             for req in pending_requests:
@@ -286,35 +300,33 @@ async def background_approval_task():
                 if b_id in active_clones:
                     bot_client = active_clones[b_id]
                     try:
-                        # Approve request
                         await bot_client.approve_chat_join_request(c_id, u_id)
-                        
-                        # Save Data
                         await users_db.update_one({"bot_id": b_id, "user_id": u_id}, {"$set": {"name": req.get("first_name", "User")}}, upsert=True)
-                        
-                        # Send DM
                         config = await settings_db.find_one({"bot_id": b_id})
                         if config and config.get("dm_msg_id"):
                             await bot_client.copy_message(u_id, config["dm_chat_id"], config["dm_msg_id"])
                     
                     except FloodWait as e:
                         await asyncio.sleep(e.value + 1)
-                    except (UserIsBlocked, PeerIdInvalid):
-                        pass # Ignore if user blocked bot
+                    except (UserIsBlocked, PeerIdInvalid, RPCError):
+                        pass 
                     except Exception as e:
-                        logging.error(f"Bg Approve Error: {e}")
+                        logging.error(f"Bg Approve Inner Error: {e}")
                         
-                # Remove from database once processed
                 await pending_reqs_db.delete_one({"_id": req["_id"]})
                 
         except Exception as e:
-            logging.error(f"Background Task Error: {e}")
+            logging.error(f"Background Task Outer Error: {e}")
             
-        await asyncio.sleep(30) # Check database every 30 seconds
+        await asyncio.sleep(30) # Scans DB every 30 seconds silently
 
 
 async def broadcast(client: Client, msg: Message):
     if not await check_admin(client, msg): return
+    
+    # Auto-cancel old pending state
+    user_states.pop(f"{client.me.id}_{msg.from_user.id}", None)
+    
     if not msg.reply_to_message:
         return await msg.reply_text("Reply to a message to broadcast.")
     
@@ -354,14 +366,12 @@ async def master_clone(client: Client, msg: Message):
     if msg.from_user.id != OWNER_ID: return
     
     if len(msg.command) < 2:
-        return await msg.reply_text("Usage: `/clone [Bot_Token] [Optional_Admin_ID]`\n_Example: /clone 1234:ABC 7330476295_")
+        return await msg.reply_text("Usage: `/clone [Bot_Token] [Optional_Admin_ID]`")
         
     token = msg.command[1]
-    
     target_admin = msg.from_user.id
     if len(msg.command) > 2:
-        try:
-            target_admin = int(msg.command[2])
+        try: target_admin = int(msg.command[2])
         except: pass
             
     wait = await msg.reply_text("⏳ Booting up Clone...")
@@ -378,15 +388,13 @@ async def master_clone(client: Client, msg: Message):
         await settings_db.update_one({"bot_id": bot_info.id}, {"$addToSet": {"admins": target_admin}}, upsert=True)
         
         await wait.edit_text(f"✅ **Clone Factory Success!**\nBot: @{bot_info.username} is Live!\nUser `{target_admin}` is set as Admin.")
-        
     except Exception as e:
         await wait.edit_text(f"❌ Failed to start clone: {e}")
 
 async def list_clones(client: Client, msg: Message):
     if msg.from_user.id != OWNER_ID: return
     clones = await clones_db.find().to_list(length=None)
-    if not clones:
-        return await msg.reply_text("🤖 Koi bhi active clone bot nahi hai.")
+    if not clones: return await msg.reply_text("🤖 Koi bhi active clone bot nahi hai.")
         
     text = "🤖 **Active Clone Bots:**\n\n"
     for c in clones:
@@ -451,7 +459,7 @@ async def main():
     
     await boot_all_clones()
     
-    # START BACKGROUND APPROVAL TASK HERE
+    # LAUNCHING THE ANTI-CRASH BACKGROUND TASK
     asyncio.create_task(background_approval_task())
     
     await web_server()
