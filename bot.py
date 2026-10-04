@@ -32,19 +32,16 @@ pending_reqs_db = db.pending_requests
 
 user_states = {}             
 active_clones = {} 
-user_terabox_links = {} # 🔹 Naya: Terabox memory har admin ke liye
+master_terabox_links = {} # 🔹 TERABOX SIRF MASTER BOT KE LIYE
 
 # --- HELPER FUNCTIONS ---
 async def check_admin(client: Client, msg: Message) -> bool:
     user_id = msg.from_user.id
     if user_id == OWNER_ID: return True
-    
     bot_id = client.me.id
     config = await settings_db.find_one({"bot_id": bot_id})
-    if config and user_id in config.get("admins", []):
-        return True
-        
-    return False # SILENT IGNORE
+    if config and user_id in config.get("admins", []): return True
+    return False 
 
 def encode_data(data: str) -> str:
     return base64.urlsafe_b64encode(data.encode()).decode().rstrip("=")
@@ -63,21 +60,21 @@ async def generate_final_link(client: Client, token_type: str, token: str) -> st
         return f"{custom_domain}?start={token_type}_{token}"
     return f"https://t.me/{client.me.username}?start={token_type}_{token}"
 
+
 # ==========================================
-# TERABOX SCRAPING FUNCTIONS
+# TERABOX SCRAPING FUNCTIONS (USED BY MASTER)
 # ==========================================
 async def safe_reply(message, text, parse_mode=None, **kwargs):
-    try:
-        await message.reply_text(text, parse_mode=parse_mode, **kwargs)
+    try: await message.reply_text(text, parse_mode=parse_mode, **kwargs)
     except FloodWait as e:
         await asyncio.sleep(e.value + 2)
         await message.reply_text(text, parse_mode=parse_mode, **kwargs)
-    except Exception: pass
+    except: pass
 
 async def fetch_terabox_title(url):
     try:
         async with aiohttp.ClientSession() as session:
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+            headers = {"User-Agent": "Mozilla/5.0"}
             async with session.get(url, headers=headers, timeout=10) as response:
                 html = await response.text()
                 match = re.search(r'<meta property="og:title" content="([^"]+)"', html, re.IGNORECASE)
@@ -104,11 +101,11 @@ def extract_info(filename):
     if title_match:
         raw_title = re.sub(r'^@[A-Za-z0-9]+_', '', title_match.group(1).strip()).replace('_', ' ').replace('.', ' ').strip()
         if len(raw_title) > 2: title = raw_title.title()
-            
     return title, year, main_lang, audio_tags
 
+
 # ==========================================
-# CLONE BOT HANDLERS 
+# 🔹 CLONE BOT LOGIC (CLEAN & FAST) 🔹
 # ==========================================
 async def clone_start(client: Client, msg: Message):
     user_id, bot_id = msg.from_user.id, client.me.id
@@ -143,7 +140,6 @@ async def clone_start(client: Client, msg: Message):
             except: pass
         
         await wait_msg.delete()
-        
         if sent_msgs and not is_permanent:
             d_time = config.get("delete_time", 900)
             alert = await msg.reply_text(f"⚠️ <u><b>Important:</b></u>\n\n<i>All Messages will be deleted after <b>{d_time//60 if d_time>=60 else d_time} {'minutes' if d_time>=60 else 'seconds'}</b>. Save them!</i>", parse_mode=enums.ParseMode.HTML)
@@ -168,7 +164,7 @@ async def link_generator(client: Client, msg: Message):
         user_states[state_key] = {"type": cmd, "step": "wait_msg" if "genlink" in cmd else "wait_first"}
         await msg.reply_text(f"{modes[cmd]}\n(Send /cancel to abort)")
     elif cmd == "cancel":
-        await msg.reply_text("✅ Action cancelled. Bot is back to normal.")
+        await msg.reply_text("✅ Action cancelled.")
 
 async def message_state_handler(client: Client, msg: Message):
     state_key = f"{client.me.id}_{msg.from_user.id}"
@@ -203,92 +199,6 @@ async def message_state_handler(client: Client, msg: Message):
         await msg.reply_text(f"✅ **Batch Link ({is_perm}):**\n`{link}`", parse_mode=enums.ParseMode.MARKDOWN)
         del user_states[state_key]
 
-# ==========================================
-# TERABOX HANDLERS (New Merge)
-# ==========================================
-async def terabox_commands(client: Client, msg: Message):
-    if not await check_admin(client, msg): return
-    cmd = msg.command[0].lower()
-    state_key = f"{client.me.id}_{msg.from_user.id}"
-    
-    if cmd == "clearlinks":
-        user_terabox_links[state_key] = []
-        return await msg.reply_text("✅ Terabox link memory cleared!")
-
-    if state_key not in user_terabox_links or not user_terabox_links[state_key]:
-        return await safe_reply(msg, "❌ Aapne abhi tak koi valid Terabox link nahi bheja hai.")
-
-    sorted_links = sorted(user_terabox_links[state_key], key=lambda x: x["ep"])
-    
-    if cmd == "set":
-        await safe_reply(msg, "⏳ **List ban rahi hai, thoda wait karein...**", parse_mode=enums.ParseMode.MARKDOWN)
-        title, year, main_lang, audio_tags = extract_info(sorted_links[0]["raw_text"])
-        final_text = f"<b>🎥 {title.replace('<', '').replace('>', '')} {main_lang} 720p</b>\n<b>━━━━━━━━━━━━━━━━━━━━</b>\n<b>⁉️ HOW TO DOWNLOAD / PLAY ⏯️ :- <a href='https://t.me/kcsjbvxdxdxcc/3'>CLICK HERE</a></b>\n<b>━━━━━━━━━━━━━━━━━━━━</b>\n\n"
-        for item in sorted_links: final_text += f"<b>📁 EP {item['ep']}</b>\n<b>{item['url']}</b>\n\n"
-        final_text += "<b>❤️‍🔥 Complete All Episodes ❤️‍🔥</b>\n\n<b>👉 Join Our Backup Channel 👈</b>\n<b>https://t.me/KOREAN_DRAMA_GT</b>"
-        await safe_reply(msg, final_text.strip(), parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
-        user_terabox_links[state_key] = []
-
-    elif cmd == "post":
-        await safe_reply(msg, "⏳ **Posts ban rahe hain, thoda wait karein...**", parse_mode=enums.ParseMode.MARKDOWN)
-        episodes_data = {}
-        for item in sorted_links:
-            ep = item['ep']
-            if ep not in episodes_data: episodes_data[ep] = {"urls": [], "raw_text": item["raw_text"]}
-            episodes_data[ep]["urls"].append(item['url'])
-            
-        for ep, data in episodes_data.items():
-            title, year, main_lang, audio_tags = extract_info(data["raw_text"])
-            urls = data["urls"]
-            link_480 = urls[0] if len(urls) > 0 else "#"
-            link_720 = urls[1] if len(urls) > 1 else urls[0]
-            
-            final_text = f"<b>🎬 {title.replace('<', '').replace('>', '')} {main_lang}</b>\n<b>📅 YEAR: {year}</b>\n<b>💿 EPISODE:- {ep}</b>\n\n<b>🔊 [ AMZN {audio_tags} ]</b>\n\n<b>              🔮 TeraBox</b>\n<b> ▬▬▬▬▬▬▬▬▬▬▬▬▬ </b>\n<b>📁 480p ☞ <a href='{link_480}'>CLICK HERE</a></b>\n\n<b>📁 720p ☞ <a href='{link_720}'>CLICK HERE</a></b>\n<b> ▬▬▬▬▬▬▬▬▬▬▬▬▬ </b>\n<b>✅ All Episode Uploaded</b>\n\n<blockquote><b>🛑 TeraBox Ads Problem Solve:\n                                       <a href='https://t.me/kcsjbvxdxdxcc/19?single'>CLICK HERE</a></b></blockquote>\n\n<b>🚨 Join Our Backup Channel:</b>\n<b>👇 https://t.me/KOREAN_DRAMA_GT</b>"
-            await safe_reply(msg, final_text, parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
-            await asyncio.sleep(2)
-        user_terabox_links[state_key] = []
-
-async def terabox_link_collector(client: Client, msg: Message):
-    if not await check_admin(client, msg): return
-    state_key = f"{client.me.id}_{msg.from_user.id}"
-    if state_key in user_states: return 
-    
-    text = msg.text or msg.caption or ""
-    clean_url = None
-    entities = getattr(msg, 'entities', None) or getattr(msg, 'caption_entities', None) or []
-    
-    for ent in entities:
-        if getattr(ent, 'url', None):
-            clean_url = ent.url
-            break
-            
-    if not clean_url:
-        match = re.search(r'(https?://[^\s]+|[a-zA-Z0-9.-]+\.com/s/[^\s]+)', text)
-        if match:
-            clean_url = match.group(1)
-            if not clean_url.startswith('http'): clean_url = 'https://' + clean_url
-                
-    if not clean_url: return
-        
-    preview_text = f"{getattr(msg.web_page, 'title', '')} {getattr(msg.web_page, 'description', '')}" if getattr(msg, 'web_page', None) else ""
-    if not preview_text.strip(): preview_text = await fetch_terabox_title(clean_url)
-        
-    combined_text = f"{text} {preview_text}"
-    ep_match = re.search(r'(?:EP|Episode|S\d+EP)\s*0*(\d+)', combined_text, re.IGNORECASE)
-    
-    if ep_match:
-        ep_num = int(ep_match.group(1))
-        if state_key not in user_terabox_links: user_terabox_links[state_key] = []
-        if not any(item['ep'] == ep_num for item in user_terabox_links[state_key]):
-            user_terabox_links[state_key].append({"ep": ep_num, "url": clean_url, "raw_text": combined_text})
-            await safe_reply(msg, f"✅ EP {ep_num} add ho gaya!")
-        else: await safe_reply(msg, f"⚠️ EP {ep_num} pehle se added hai.")
-    else:
-        await safe_reply(msg, f"❌ **EP Detect Nahi Hua!**\n\n**Bot ne ye padha:**\n`{combined_text[:100]}`", parse_mode=enums.ParseMode.MARKDOWN)
-
-# ==========================================
-# ADMIN SETTINGS & BROADCAST
-# ==========================================
 async def admin_settings(client: Client, msg: Message):
     if not await check_admin(client, msg): return
     bot_id, cmd = client.me.id, msg.command[0]
@@ -359,9 +269,6 @@ async def broadcast(client: Client, msg: Message):
             await users_db.delete_one({"bot_id": bot_id, "user_id": u["user_id"]})
     await status.edit_text(f"✅ **Broadcast Complete**\nSuccess: {success}\nFailed/Blocked: {failed}")
 
-# ==========================================
-# AUTO APPROVE BACKGROUND TASK
-# ==========================================
 async def auto_approve_join(client: Client, req: ChatJoinRequest):
     bot_id = client.me.id
     try:
@@ -395,20 +302,10 @@ async def background_approval_task():
         except: pass
         await asyncio.sleep(30) 
 
-# ==========================================
-# MASTER BOT MANAGEMENT & CLONE CONTROLS
-# ==========================================
-def attach_clone_handlers(bot: Client):
-    bot.add_handler(MessageHandler(clone_start, filters.command("start") & filters.private))
-    bot.add_handler(MessageHandler(terabox_commands, filters.command(["set", "post", "clearlinks"]) & filters.private))
-    bot.add_handler(MessageHandler(link_generator, filters.command(["batch", "genlink", "pbatch", "pgenlink", "cancel"])))
-    bot.add_handler(MessageHandler(admin_settings, filters.command(["caption", "settime", "setlink", "setwatermark", "setdm", "setapprove", "setdomain", "addadmin", "deladmin"])))
-    bot.add_handler(MessageHandler(broadcast, filters.command("broadcast")))
-    # Messages starting with / ignore normal processing unless caught above
-    bot.add_handler(MessageHandler(terabox_link_collector, (filters.text | filters.caption) & ~filters.command(["start", "batch", "genlink", "pbatch", "pgenlink", "cancel", "caption", "settime", "setlink", "setwatermark", "setdm", "setapprove", "setdomain", "addadmin", "deladmin", "broadcast", "set", "post", "clearlinks"]) & filters.private))
-    bot.add_handler(MessageHandler(message_state_handler, filters.private))
-    bot.add_handler(ChatJoinRequestHandler(auto_approve_join))
 
+# ==========================================
+# 👑 MASTER BOT LOGIC (TERABOX + CLONES) 👑
+# ==========================================
 async def master_clone(client: Client, msg: Message):
     if msg.from_user.id != OWNER_ID: return 
     if len(msg.command) < 2: return await msg.reply_text("Usage: `/clone [Bot_Token] [Optional_Admin_ID]`")
@@ -448,9 +345,98 @@ async def delete_clone(client: Client, msg: Message):
     result = await clones_db.delete_one({"bot_id": target_id})
     if result.deleted_count > 0: await msg.reply_text(f"✅ Clone Bot (ID: `{target_id}`) ko disconnect kar diya gaya hai.")
 
+# --- MASTER TERABOX COMMANDS ---
+async def master_tb_commands(client: Client, msg: Message):
+    if msg.from_user.id != OWNER_ID: return
+    cmd = msg.command[0].lower()
+    
+    if cmd == "clearlinks":
+        master_terabox_links[OWNER_ID] = []
+        return await msg.reply_text("✅ Terabox link memory cleared!")
+
+    if OWNER_ID not in master_terabox_links or not master_terabox_links[OWNER_ID]:
+        return await safe_reply(msg, "❌ Aapne abhi tak koi valid Terabox link nahi bheja hai.")
+
+    sorted_links = sorted(master_terabox_links[OWNER_ID], key=lambda x: x["ep"])
+    
+    if cmd == "set":
+        await safe_reply(msg, "⏳ **List ban rahi hai, thoda wait karein...**", parse_mode=enums.ParseMode.MARKDOWN)
+        title, year, main_lang, audio_tags = extract_info(sorted_links[0]["raw_text"])
+        final_text = f"<b>🎥 {title.replace('<', '').replace('>', '')} {main_lang} 720p</b>\n<b>━━━━━━━━━━━━━━━━━━━━</b>\n<b>⁉️ HOW TO DOWNLOAD / PLAY ⏯️ :- <a href='https://t.me/kcsjbvxdxdxcc/3'>CLICK HERE</a></b>\n<b>━━━━━━━━━━━━━━━━━━━━</b>\n\n"
+        for item in sorted_links: final_text += f"<b>📁 EP {item['ep']}</b>\n<b>{item['url']}</b>\n\n"
+        final_text += "<b>❤️‍🔥 Complete All Episodes ❤️‍🔥</b>\n\n<b>👉 Join Our Backup Channel 👈</b>\n<b>https://t.me/KOREAN_DRAMA_GT</b>"
+        await safe_reply(msg, final_text.strip(), parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
+        master_terabox_links[OWNER_ID] = []
+
+    elif cmd == "post":
+        await safe_reply(msg, "⏳ **Posts ban rahe hain, thoda wait karein...**", parse_mode=enums.ParseMode.MARKDOWN)
+        episodes_data = {}
+        for item in sorted_links:
+            ep = item['ep']
+            if ep not in episodes_data: episodes_data[ep] = {"urls": [], "raw_text": item["raw_text"]}
+            episodes_data[ep]["urls"].append(item['url'])
+            
+        for ep, data in episodes_data.items():
+            title, year, main_lang, audio_tags = extract_info(data["raw_text"])
+            urls = data["urls"]
+            link_480 = urls[0] if len(urls) > 0 else "#"
+            link_720 = urls[1] if len(urls) > 1 else urls[0]
+            
+            final_text = f"<b>🎬 {title.replace('<', '').replace('>', '')} {main_lang}</b>\n<b>📅 YEAR: {year}</b>\n<b>💿 EPISODE:- {ep}</b>\n\n<b>🔊 [ AMZN {audio_tags} ]</b>\n\n<b>              🔮 TeraBox</b>\n<b> ▬▬▬▬▬▬▬▬▬▬▬▬▬ </b>\n<b>📁 480p ☞ <a href='{link_480}'>CLICK HERE</a></b>\n\n<b>📁 720p ☞ <a href='{link_720}'>CLICK HERE</a></b>\n<b> ▬▬▬▬▬▬▬▬▬▬▬▬▬ </b>\n<b>✅ All Episode Uploaded</b>\n\n<blockquote><b>🛑 TeraBox Ads Problem Solve:\n                                       <a href='https://t.me/kcsjbvxdxdxcc/19?single'>CLICK HERE</a></b></blockquote>\n\n<b>🚨 Join Our Backup Channel:</b>\n<b>👇 https://t.me/KOREAN_DRAMA_GT</b>"
+            await safe_reply(msg, final_text, parse_mode=enums.ParseMode.HTML, disable_web_page_preview=True)
+            await asyncio.sleep(2)
+        master_terabox_links[OWNER_ID] = []
+
+# --- MASTER TERABOX COLLECTOR ---
+async def master_tb_collector(client: Client, msg: Message):
+    if msg.from_user.id != OWNER_ID: return
+    if msg.text and msg.text.startswith('/'): return
+    
+    text = msg.text or msg.caption or ""
+    clean_url = None
+    entities = getattr(msg, 'entities', None) or getattr(msg, 'caption_entities', None) or []
+    
+    for ent in entities:
+        if getattr(ent, 'url', None):
+            clean_url = ent.url
+            break
+            
+    if not clean_url:
+        match = re.search(r'(https?://[^\s]+|[a-zA-Z0-9.-]+\.com/s/[^\s]+)', text)
+        if match:
+            clean_url = match.group(1)
+            if not clean_url.startswith('http'): clean_url = 'https://' + clean_url
+                
+    if not clean_url: return 
+        
+    preview_text = f"{getattr(msg.web_page, 'title', '')} {getattr(msg.web_page, 'description', '')}" if getattr(msg, 'web_page', None) else ""
+    if not preview_text.strip(): preview_text = await fetch_terabox_title(clean_url)
+        
+    combined_text = f"{text} {preview_text}"
+    ep_match = re.search(r'(?:EP|Episode|S\d+EP)\s*0*(\d+)', combined_text, re.IGNORECASE)
+    
+    if ep_match:
+        ep_num = int(ep_match.group(1))
+        if OWNER_ID not in master_terabox_links: master_terabox_links[OWNER_ID] = []
+        if not any(item['ep'] == ep_num for item in master_terabox_links[OWNER_ID]):
+            master_terabox_links[OWNER_ID].append({"ep": ep_num, "url": clean_url, "raw_text": combined_text})
+            await safe_reply(msg, f"✅ EP {ep_num} add ho gaya!")
+        else: await safe_reply(msg, f"⚠️ EP {ep_num} pehle se added hai.")
+    else:
+        await safe_reply(msg, f"❌ **EP Detect Nahi Hua!**\n\n**Bot ne ye padha:**\n`{combined_text[:100]}`", parse_mode=enums.ParseMode.MARKDOWN)
+
 # ==========================================
-# STARTUP ROUTINE
+# ATTACHING HANDLERS
 # ==========================================
+def attach_clone_handlers(bot: Client):
+    # CLONES KE PAAS SIRF BATCH AUR SETTINGS WALE HANDLER HAIN (NO TERABOX)
+    bot.add_handler(MessageHandler(clone_start, filters.command("start") & filters.private))
+    bot.add_handler(MessageHandler(link_generator, filters.command(["batch", "genlink", "pbatch", "pgenlink", "cancel"]) & filters.private))
+    bot.add_handler(MessageHandler(admin_settings, filters.command(["caption", "settime", "setlink", "setwatermark", "setdm", "setapprove", "setdomain", "addadmin", "deladmin"]) & filters.private))
+    bot.add_handler(MessageHandler(broadcast, filters.command("broadcast") & filters.private))
+    bot.add_handler(MessageHandler(message_state_handler, filters.private))
+    bot.add_handler(ChatJoinRequestHandler(auto_approve_join))
+
 async def web_server():
     app = web.Application()
     app.router.add_get('/', lambda request: web.Response(text="Master-Clone Engine Live!"))
@@ -460,10 +446,17 @@ async def web_server():
 
 async def main():
     if not MASTER_TOKEN or not MONGO_URI: return logging.error("Missing Environment Variables!")
+    
     master = Client("master_factory", api_id=API_ID, api_hash=API_HASH, bot_token=MASTER_TOKEN)
+    
+    # 👑 MASTER BOT KE APNE HANDLERS 👑
     master.add_handler(MessageHandler(master_clone, filters.command("clone") & filters.private))
     master.add_handler(MessageHandler(list_clones, filters.command("clones") & filters.private))
     master.add_handler(MessageHandler(delete_clone, filters.command("delclone") & filters.private))
+    
+    # MASTER TERABOX HANDLERS
+    master.add_handler(MessageHandler(master_tb_commands, filters.command(["set", "post", "clearlinks"]) & filters.private))
+    master.add_handler(MessageHandler(master_tb_collector, (filters.text | filters.caption) & filters.private))
     
     await master.start()
     logging.info("Master Factory Bot is Online!")
