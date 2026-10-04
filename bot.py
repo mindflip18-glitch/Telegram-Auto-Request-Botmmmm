@@ -8,7 +8,7 @@ from aiohttp import web
 from pyrogram import Client, filters, enums, idle
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, ChatJoinRequest
 from pyrogram.handlers import MessageHandler, ChatJoinRequestHandler
-from pyrogram.errors import FloodWait
+from pyrogram.errors import FloodWait, UserIsBlocked, PeerIdInvalid
 from motor.motor_asyncio import AsyncIOMotorClient
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -27,16 +27,23 @@ db = mongo_client.clone_factory
 clones_db = db.clones        
 settings_db = db.settings    
 users_db = db.users          
+pending_reqs_db = db.pending_requests # NEW: Saves delayed join requests to avoid crashes
 
 user_states = {}             
 active_clones = {} 
 
 # --- HELPER FUNCTIONS ---
-async def is_admin(client: Client, user_id: int) -> bool:
+async def check_admin(client: Client, msg: Message) -> bool:
+    user_id = msg.from_user.id
     if user_id == OWNER_ID: return True
+    
     bot_id = client.me.id
     config = await settings_db.find_one({"bot_id": bot_id})
-    return config and user_id in config.get("admins", [])
+    if config and user_id in config.get("admins", []):
+        return True
+        
+    await msg.reply_text(f"❌ **Access Denied!**\nAap is bot ke Admin nahi hain.\n\n👤 **Aapki User ID:** `{user_id}`\n\n_Master Admin ko bolkar apni ID add karwayein._", parse_mode=enums.ParseMode.MARKDOWN)
+    return False
 
 def encode_data(data: str) -> str:
     return base64.urlsafe_b64encode(data.encode()).decode().rstrip("=")
@@ -56,9 +63,7 @@ async def clone_start(client: Client, msg: Message):
     
     await users_db.update_one({"bot_id": bot_id, "user_id": user_id}, {"$set": {"name": msg.from_user.first_name}}, upsert=True)
     
-    # Agar sirf /start hai, toh kuch reply nahi karna
-    if len(msg.command) <= 1:
-        return 
+    if len(msg.command) <= 1: return 
         
     param = msg.command[1]
     
@@ -74,7 +79,7 @@ async def clone_start(client: Client, msg: Message):
         
         config = await settings_db.find_one({"bot_id": bot_id}) or {}
         caption_on = config.get("caption_on", True)
-        delete_delay = config.get("delete_time", 900) # Default 15 mins (900s)
+        delete_delay = config.get("delete_time", 900)
         cap_link = config.get("caption_link", "https://t.me/KOREAN_DRAMA_GT")
         watermark = config.get("watermark", "⚜️ Powered By : @GTKOREANDRAMA")
         
@@ -85,9 +90,9 @@ async def clone_start(client: Client, msg: Message):
                 if tg_msg.empty: continue
                 
                 if caption_on and (tg_msg.document or tg_msg.video or tg_msg.audio):
-                    fname = getattr(tg_msg.document or tg_msg.video or tg_msg.audio, 'file_name', '🎬 Movie/Series File')
-                    # Custom Editable Caption with File Name as Link
-                    cap = f"<b><a href='{cap_link}'>{fname}</a></b>\n\n<b>{watermark}</b>"
+                    raw_fname = getattr(tg_msg.document or tg_msg.video or tg_msg.audio, 'file_name', '🎬 Movie/Series File')
+                    safe_fname = str(raw_fname).replace("<", "&lt;").replace(">", "&gt;").replace("&", "&amp;")
+                    cap = f"<b><a href='{cap_link}'>{safe_fname}</a></b>\n\n<b>{watermark}</b>"
                     sent = await client.copy_message(msg.chat.id, chat_id, m_id, caption=cap, parse_mode=enums.ParseMode.HTML)
                 else:
                     sent = await client.copy_message(msg.chat.id, chat_id, m_id)
@@ -101,18 +106,14 @@ async def clone_start(client: Client, msg: Message):
         await wait_msg.delete()
         
         if sent_msgs:
-            # Dynamic Time Calculation for Image-Style Alert
             time_text = f"{delete_delay // 60} minutes" if delete_delay >= 60 else f"{delete_delay} seconds"
-            
             alert_text = (
                 "⚠️ <u><b>Important:</b></u>\n\n"
                 f"<i>All Messages will be deleted after <b>{time_text}</b>. Please save or forward these "
                 "messages to your <b>personal saved messages</b> to avoid losing them!</i>"
             )
-            
             alert = await msg.reply_text(alert_text, parse_mode=enums.ParseMode.HTML)
             
-            # Auto-Delete Logic
             await asyncio.sleep(delete_delay)
             try:
                 await client.delete_messages(msg.chat.id, sent_msgs + [alert.id])
@@ -120,7 +121,7 @@ async def clone_start(client: Client, msg: Message):
 
 
 async def link_generator(client: Client, msg: Message):
-    if not await is_admin(client, msg.from_user.id): return
+    if not await check_admin(client, msg): return
     cmd = msg.command[0]
     state_key = f"{client.me.id}_{msg.from_user.id}"
     
@@ -178,7 +179,7 @@ async def message_state_handler(client: Client, msg: Message):
 
 
 async def admin_settings(client: Client, msg: Message):
-    if not await is_admin(client, msg.from_user.id): return
+    if not await check_admin(client, msg): return
     bot_id = client.me.id
     cmd = msg.command[0]
     
@@ -195,6 +196,16 @@ async def admin_settings(client: Client, msg: Message):
             await msg.reply_text(f"✅ Auto-Delete timer set to {time_txt}.")
         except:
             await msg.reply_text("Usage: `/settime 900` (for 15 minutes)")
+            
+    elif cmd == "setapprove":
+        try:
+            delay = int(msg.command[1])
+            await settings_db.update_one({"bot_id": bot_id}, {"$set": {"approve_delay": delay}}, upsert=True)
+            delay_txt = f"{delay//3600} hours" if delay >= 3600 else (f"{delay//60} minutes" if delay >= 60 else f"{delay} seconds")
+            if delay == 0: delay_txt = "Instant (0 seconds)"
+            await msg.reply_text(f"✅ Join Request Auto-Approve delay set to: **{delay_txt}**")
+        except:
+            await msg.reply_text("Usage: `/setapprove 14400` (for 4 hours delay)")
             
     elif cmd == "setlink" and len(msg.command) > 1:
         new_link = msg.command[1]
@@ -213,29 +224,97 @@ async def admin_settings(client: Client, msg: Message):
         await msg.reply_text("✅ Welcome DM successfully saved!")
         
     elif cmd == "addadmin" and len(msg.command) > 1:
-        await settings_db.update_one({"bot_id": bot_id}, {"$addToSet": {"admins": int(msg.command[1])}}, upsert=True)
-        await msg.reply_text(f"✅ Admin {msg.command[1]} added successfully!")
-        
+        try:
+            new_admin_id = int(msg.command[1])
+            await settings_db.update_one({"bot_id": bot_id}, {"$addToSet": {"admins": new_admin_id}}, upsert=True)
+            await msg.reply_text(f"✅ Admin `{new_admin_id}` added successfully!")
+        except:
+            pass
+            
     elif cmd == "deladmin" and len(msg.command) > 1:
-        await settings_db.update_one({"bot_id": bot_id}, {"$pull": {"admins": int(msg.command[1])}})
-        await msg.reply_text(f"🗑 Admin {msg.command[1]} removed.")
+        try:
+            target_admin_id = int(msg.command[1])
+            await settings_db.update_one({"bot_id": bot_id}, {"$pull": {"admins": target_admin_id}})
+            await msg.reply_text(f"🗑 Admin `{target_admin_id}` removed.")
+        except:
+            pass
 
 
 async def auto_approve_join(client: Client, req: ChatJoinRequest):
     bot_id = client.me.id
     try:
+        config = await settings_db.find_one({"bot_id": bot_id}) or {}
+        delay = config.get("approve_delay", 0)
+        
+        # Smart Database Queueing for Delayed Requests
+        if delay > 0:
+            execute_at = time.time() + delay
+            await pending_reqs_db.insert_one({
+                "bot_id": bot_id,
+                "chat_id": req.chat.id,
+                "user_id": req.from_user.id,
+                "first_name": req.from_user.first_name,
+                "execute_at": execute_at
+            })
+            return # Save and forget. Background task will handle it.
+            
+        # If no delay, approve instantly
         await req.approve()
         await users_db.update_one({"bot_id": bot_id, "user_id": req.from_user.id}, {"$set": {"name": req.from_user.first_name}}, upsert=True)
-        
-        config = await settings_db.find_one({"bot_id": bot_id})
         if config and config.get("dm_msg_id"):
             await client.copy_message(req.from_user.id, config["dm_chat_id"], config["dm_msg_id"])
+            
     except Exception as e:
-        logging.error(f"Auto-approve failed: {e}")
+        logging.error(f"Join Request Error: {e}")
+
+# ==========================================
+# BACKGROUND LOOP (ANTI-CRASH)
+# ==========================================
+
+async def background_approval_task():
+    while True:
+        try:
+            now = time.time()
+            # Find all requests whose delay time has finished
+            pending_requests = await pending_reqs_db.find({"execute_at": {"$lte": now}}).to_list(length=None)
+            
+            for req in pending_requests:
+                b_id = req["bot_id"]
+                u_id = req["user_id"]
+                c_id = req["chat_id"]
+                
+                if b_id in active_clones:
+                    bot_client = active_clones[b_id]
+                    try:
+                        # Approve request
+                        await bot_client.approve_chat_join_request(c_id, u_id)
+                        
+                        # Save Data
+                        await users_db.update_one({"bot_id": b_id, "user_id": u_id}, {"$set": {"name": req.get("first_name", "User")}}, upsert=True)
+                        
+                        # Send DM
+                        config = await settings_db.find_one({"bot_id": b_id})
+                        if config and config.get("dm_msg_id"):
+                            await bot_client.copy_message(u_id, config["dm_chat_id"], config["dm_msg_id"])
+                    
+                    except FloodWait as e:
+                        await asyncio.sleep(e.value + 1)
+                    except (UserIsBlocked, PeerIdInvalid):
+                        pass # Ignore if user blocked bot
+                    except Exception as e:
+                        logging.error(f"Bg Approve Error: {e}")
+                        
+                # Remove from database once processed
+                await pending_reqs_db.delete_one({"_id": req["_id"]})
+                
+        except Exception as e:
+            logging.error(f"Background Task Error: {e}")
+            
+        await asyncio.sleep(30) # Check database every 30 seconds
 
 
 async def broadcast(client: Client, msg: Message):
-    if not await is_admin(client, msg.from_user.id): return
+    if not await check_admin(client, msg): return
     if not msg.reply_to_message:
         return await msg.reply_text("Reply to a message to broadcast.")
     
@@ -266,7 +345,7 @@ async def broadcast(client: Client, msg: Message):
 def attach_clone_handlers(bot: Client):
     bot.add_handler(MessageHandler(clone_start, filters.command("start") & filters.private))
     bot.add_handler(MessageHandler(link_generator, filters.command(["batch", "genlink", "cancel"])))
-    bot.add_handler(MessageHandler(admin_settings, filters.command(["caption", "settime", "setlink", "setwatermark", "setdm", "addadmin", "deladmin"])))
+    bot.add_handler(MessageHandler(admin_settings, filters.command(["caption", "settime", "setlink", "setwatermark", "setdm", "setapprove", "addadmin", "deladmin"])))
     bot.add_handler(MessageHandler(broadcast, filters.command("broadcast")))
     bot.add_handler(MessageHandler(message_state_handler, filters.private))
     bot.add_handler(ChatJoinRequestHandler(auto_approve_join))
@@ -275,9 +354,16 @@ async def master_clone(client: Client, msg: Message):
     if msg.from_user.id != OWNER_ID: return
     
     if len(msg.command) < 2:
-        return await msg.reply_text("Usage: `/clone [Bot_Token]`")
+        return await msg.reply_text("Usage: `/clone [Bot_Token] [Optional_Admin_ID]`\n_Example: /clone 1234:ABC 7330476295_")
         
     token = msg.command[1]
+    
+    target_admin = msg.from_user.id
+    if len(msg.command) > 2:
+        try:
+            target_admin = int(msg.command[2])
+        except: pass
+            
     wait = await msg.reply_text("⏳ Booting up Clone...")
     
     try:
@@ -289,16 +375,15 @@ async def master_clone(client: Client, msg: Message):
         
         active_clones[bot_info.id] = new_bot
         await clones_db.update_one({"bot_id": bot_info.id}, {"$set": {"token": token, "username": bot_info.username}}, upsert=True)
-        await settings_db.update_one({"bot_id": bot_info.id}, {"$addToSet": {"admins": msg.from_user.id}}, upsert=True)
+        await settings_db.update_one({"bot_id": bot_info.id}, {"$addToSet": {"admins": target_admin}}, upsert=True)
         
-        await wait.edit_text(f"✅ **Clone Factory Success!**\nBot: @{bot_info.username} is Live!\nYou have been set as Admin.")
+        await wait.edit_text(f"✅ **Clone Factory Success!**\nBot: @{bot_info.username} is Live!\nUser `{target_admin}` is set as Admin.")
         
     except Exception as e:
         await wait.edit_text(f"❌ Failed to start clone: {e}")
 
 async def list_clones(client: Client, msg: Message):
     if msg.from_user.id != OWNER_ID: return
-    
     clones = await clones_db.find().to_list(length=None)
     if not clones:
         return await msg.reply_text("🤖 Koi bhi active clone bot nahi hai.")
@@ -307,34 +392,24 @@ async def list_clones(client: Client, msg: Message):
     for c in clones:
         status = "🟢 Live" if c['bot_id'] in active_clones else "🔴 Offline"
         text += f"• @{c.get('username', 'Unknown')} (ID: `{c['bot_id']}`) - {status}\n"
-        
     text += "\nKisi bot ko delete karne ke liye type karein:\n`/delclone [bot_id]`"
     await msg.reply_text(text)
 
 async def delete_clone(client: Client, msg: Message):
     if msg.from_user.id != OWNER_ID: return
-    
-    if len(msg.command) < 2:
-        return await msg.reply_text("Usage: `/delclone [bot_id]`")
-        
-    try:
-        target_id = int(msg.command[1])
-    except:
-        return await msg.reply_text("❌ Please ek valid Bot ID dalein (Numbers only).")
+    if len(msg.command) < 2: return await msg.reply_text("Usage: `/delclone [bot_id]`")
+    try: target_id = int(msg.command[1])
+    except: return await msg.reply_text("❌ Please ek valid Bot ID dalein (Numbers only).")
         
     if target_id in active_clones:
         try:
             await active_clones[target_id].stop()
             del active_clones[target_id]
-        except Exception as e:
-            logging.error(f"Error stopping client: {e}")
+        except Exception: pass
             
     result = await clones_db.delete_one({"bot_id": target_id})
-    
-    if result.deleted_count > 0:
-        await msg.reply_text(f"✅ Clone Bot (ID: `{target_id}`) ko successfully disconnect kar diya gaya hai.")
-    else:
-        await msg.reply_text("❌ Ye Bot ID database mein nahi mili.")
+    if result.deleted_count > 0: await msg.reply_text(f"✅ Clone Bot (ID: `{target_id}`) ko disconnect kar diya gaya hai.")
+    else: await msg.reply_text("❌ Ye Bot ID database mein nahi mili.")
 
 # ==========================================
 # SERVER & STARTUP ROUTINES
@@ -375,6 +450,10 @@ async def main():
     logging.info("Master Factory Bot is Online!")
     
     await boot_all_clones()
+    
+    # START BACKGROUND APPROVAL TASK HERE
+    asyncio.create_task(background_approval_task())
+    
     await web_server()
     await idle()
     await master.stop()
