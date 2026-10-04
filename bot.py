@@ -27,7 +27,7 @@ db = mongo_client.clone_factory
 clones_db = db.clones        
 settings_db = db.settings    
 users_db = db.users          
-pending_reqs_db = db.pending_requests # ANTI-CRASH QUEUE FOR LONG DELAYS
+pending_reqs_db = db.pending_requests # ANTI-CRASH QUEUE
 
 user_states = {}             
 active_clones = {} 
@@ -42,7 +42,7 @@ async def check_admin(client: Client, msg: Message) -> bool:
     if config and user_id in config.get("admins", []):
         return True
         
-    await msg.reply_text(f"❌ **Access Denied!**\nAap is bot ke Admin nahi hain.\n\n👤 **Aapki User ID:** `{user_id}`\n\n_Master Admin ko bolkar apni ID add karwayein._", parse_mode=enums.ParseMode.MARKDOWN)
+    # SILENT SECURITY: No "Access Denied" reply anymore. Bot will just ignore the user.
     return False
 
 def encode_data(data: str) -> str:
@@ -66,7 +66,7 @@ async def clone_start(client: Client, msg: Message):
     
     await users_db.update_one({"bot_id": bot_id, "user_id": user_id}, {"$set": {"name": msg.from_user.first_name}}, upsert=True)
     
-    if len(msg.command) <= 1: return 
+    if len(msg.command) <= 1: return # Silent on normal /start
         
     param = msg.command[1]
     
@@ -93,11 +93,9 @@ async def clone_start(client: Client, msg: Message):
                 if tg_msg.empty: continue
                 
                 if caption_on and (tg_msg.document or tg_msg.video or tg_msg.audio):
-                    # Fetch filename safely
                     media_obj = tg_msg.document or tg_msg.video or tg_msg.audio
                     raw_fname = getattr(media_obj, 'file_name', None) or '🎬 Movie/Series File'
                     
-                    # HTML Safety for Bold Tags
                     safe_fname = str(raw_fname).replace("<", "&lt;").replace(">", "&gt;").replace("&", "&amp;")
                     cap = f"<b><a href='{cap_link}'>{safe_fname}</a></b>\n\n<b>{watermark}</b>"
                     
@@ -114,7 +112,6 @@ async def clone_start(client: Client, msg: Message):
         await wait_msg.delete()
         
         if sent_msgs:
-            # Dynamic Image-Style Delete Alert
             time_text = f"{delete_delay // 60} minutes" if delete_delay >= 60 else f"{delete_delay} seconds"
             alert_text = (
                 "⚠️ <u><b>Important:</b></u>\n\n"
@@ -134,7 +131,6 @@ async def link_generator(client: Client, msg: Message):
     cmd = msg.command[0]
     state_key = f"{client.me.id}_{msg.from_user.id}"
     
-    # ALWAYS Auto-cancel any previous stuck command before starting a new one
     user_states.pop(state_key, None)
     
     if cmd == "genlink":
@@ -150,7 +146,6 @@ async def link_generator(client: Client, msg: Message):
 async def message_state_handler(client: Client, msg: Message):
     state_key = f"{client.me.id}_{msg.from_user.id}"
     
-    # If user sends ANY command, drop the wait state instantly
     if msg.text and msg.text.startswith('/'): 
         user_states.pop(state_key, None)
         return 
@@ -195,7 +190,6 @@ async def admin_settings(client: Client, msg: Message):
     bot_id = client.me.id
     cmd = msg.command[0]
     
-    # Auto-cancel old pending state
     user_states.pop(f"{bot_id}_{msg.from_user.id}", None)
     
     if cmd == "caption":
@@ -261,7 +255,6 @@ async def auto_approve_join(client: Client, req: ChatJoinRequest):
         config = await settings_db.find_one({"bot_id": bot_id}) or {}
         delay = config.get("approve_delay", 0)
         
-        # SMART DATABASE QUEUE: Prevents RAM crash on long delays (e.g. 4 hours)
         if delay > 0:
             execute_at = time.time() + delay
             await pending_reqs_db.insert_one({
@@ -273,7 +266,6 @@ async def auto_approve_join(client: Client, req: ChatJoinRequest):
             })
             return 
             
-        # INSTANT APPROVAL
         await req.approve()
         await users_db.update_one({"bot_id": bot_id, "user_id": req.from_user.id}, {"$set": {"name": req.from_user.first_name}}, upsert=True)
         if config and config.get("dm_msg_id"):
@@ -318,13 +310,12 @@ async def background_approval_task():
         except Exception as e:
             logging.error(f"Background Task Outer Error: {e}")
             
-        await asyncio.sleep(30) # Scans DB every 30 seconds silently
+        await asyncio.sleep(30) 
 
 
 async def broadcast(client: Client, msg: Message):
     if not await check_admin(client, msg): return
     
-    # Auto-cancel old pending state
     user_states.pop(f"{client.me.id}_{msg.from_user.id}", None)
     
     if not msg.reply_to_message:
@@ -363,7 +354,7 @@ def attach_clone_handlers(bot: Client):
     bot.add_handler(ChatJoinRequestHandler(auto_approve_join))
 
 async def master_clone(client: Client, msg: Message):
-    if msg.from_user.id != OWNER_ID: return
+    if msg.from_user.id != OWNER_ID: return # Silent ignore for non-owners
     
     if len(msg.command) < 2:
         return await msg.reply_text("Usage: `/clone [Bot_Token] [Optional_Admin_ID]`")
@@ -392,7 +383,7 @@ async def master_clone(client: Client, msg: Message):
         await wait.edit_text(f"❌ Failed to start clone: {e}")
 
 async def list_clones(client: Client, msg: Message):
-    if msg.from_user.id != OWNER_ID: return
+    if msg.from_user.id != OWNER_ID: return # Silent ignore
     clones = await clones_db.find().to_list(length=None)
     if not clones: return await msg.reply_text("🤖 Koi bhi active clone bot nahi hai.")
         
@@ -404,7 +395,7 @@ async def list_clones(client: Client, msg: Message):
     await msg.reply_text(text)
 
 async def delete_clone(client: Client, msg: Message):
-    if msg.from_user.id != OWNER_ID: return
+    if msg.from_user.id != OWNER_ID: return # Silent ignore
     if len(msg.command) < 2: return await msg.reply_text("Usage: `/delclone [bot_id]`")
     try: target_id = int(msg.command[1])
     except: return await msg.reply_text("❌ Please ek valid Bot ID dalein (Numbers only).")
@@ -458,8 +449,6 @@ async def main():
     logging.info("Master Factory Bot is Online!")
     
     await boot_all_clones()
-    
-    # LAUNCHING THE ANTI-CRASH BACKGROUND TASK
     asyncio.create_task(background_approval_task())
     
     await web_server()
